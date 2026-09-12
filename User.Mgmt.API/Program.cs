@@ -7,7 +7,9 @@ using User.Mgmt.Service.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+//**********  services registration in the DI container. *******************************
+
+//get DB connection string and register it
 builder.Services.AddDbContext<AppDbDataContext>(options =>
 {
     options.UseSqlServer(builder.Configuration.GetConnectionString("DbConnStrng"));
@@ -32,11 +34,18 @@ builder.Services.AddSingleton(emailConfig);
 
 builder.Services.AddScoped<IEmailService, EmailService>();
 
+// spcificied that EMAIL CONFIRMATION IS REQUIRED.
+builder.Services.Configure<IdentityOptions>(options =>
+{
+    options.SignIn.RequireConfirmedEmail = true;
+});
+
 builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+//********** Middleware pipeline Configurations *******************************
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

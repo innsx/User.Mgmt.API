@@ -62,18 +62,41 @@ namespace User.Mgmt.API.Controllers
                     new ResponseDto
                     {
                         Status = "Error",
-                        Message = "User failed to created."
+                        Message = "Failed to created User."
                     });
                 }
 
                 //add role to user on AspNetUserRoles table
                 await _userManager.AddToRoleAsync(user, role);
 
-                return StatusCode(StatusCodes.Status201Created,
+                //Generate a Token for User with this email
+                var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+
+                //create a confirmationLink based of a Url.Action
+                var confirmationLink = Url.Action
+                (
+                    nameof(ConfirmEmail), //Endpoint in AuthenticationController.cs
+                    "Authentication", //"Authentication" Controller
+                    new { token, email = user.Email },
+                    Request.Scheme  //invoke HTTPRequest Scheme
+                );
+
+                //create a message consists of user's email, subject and the confirmationLink
+                var message = new Message
+                (
+                    new string[] { user.Email!},
+                    "Confirmation email link",
+                    confirmationLink!
+                );
+                
+                //then send message with User's email
+                _emailService.SendEmails(message);
+
+                return StatusCode(StatusCodes.Status200OK,
                 new ResponseDto
                 {
                     Status = "Success",
-                    Message = "User created successfully."
+                    Message = $"User created and Email is sent to {user.Email} successfully."
                 });
             }
             else
@@ -82,30 +105,38 @@ namespace User.Mgmt.API.Controllers
                 new ResponseDto
                 {
                     Status = "Error",
-                    Message = "Role does not exist."
+                    Message = $"Role: {role} does not exist."
                 });
             }
         }
 
-        [HttpGet("test-email")]
-        public IActionResult TestEmail()
+        [HttpGet("confirm-email")]
+        public async Task<IActionResult> ConfirmEmail(string token, string email)
         {
-            var subject = "Test...";
-            var content = "<h1>Subscribe to my channel!";
-            var to = new string[] { "kou20.xiong30@gmail.com" };
-            
-            //"need to turn verification on this account kou20.xiong21@gmail.com"
+            var user = await _userManager.FindByEmailAsync(email);
 
-            var message = new Message(to, subject, content);
+            if (user is not null)
+            {
+                var confirmEmail = await _userManager.ConfirmEmailAsync(user, token);
 
-            _emailService.SendEmails(message);
+                if (confirmEmail.Succeeded)
+                {
+                    return StatusCode(StatusCodes.Status200OK,
+                        new ResponseDto
+                        {
+                            Status = "Success",
+                            Message = $"Email: {email} verified successfully."
+                        });
+                }
+            }
 
-            return StatusCode(StatusCodes.Status200OK,
-            new ResponseDto
-                    {
-                        Status = "Success",
-                        Message = "Email sent successfully."
-                    });
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new ResponseDto
+                {
+                    Status = "Error",
+                    Message = $"User with Email: {email} does not exist."
+                });
         }
     }
+    
 }
