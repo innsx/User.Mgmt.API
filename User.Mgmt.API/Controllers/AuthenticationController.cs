@@ -1,6 +1,11 @@
 ﻿using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 using User.Mgmt.API.Models;
+using User.Mgmt.API.Models.Login;
 using User.Mgmt.API.Models.SignUp;
 using User.Mgmt.Service.Models;
 using User.Mgmt.Service.Services;
@@ -14,12 +19,14 @@ namespace User.Mgmt.API.Controllers
         private readonly UserManager<IdentityUser> _userManager;
         private readonly RoleManager<IdentityRole> _roleManager;
         private readonly IEmailService _emailService;
+        private readonly IConfiguration _configuration;
 
-        public AuthenticationController(UserManager<IdentityUser> userManager, RoleManager<IdentityRole> roleManager, IEmailService emailService)
+        public AuthenticationController(UserManager<IdentityUser> userManager, RoleManager<IdentityRole> roleManager, IEmailService emailService, IConfiguration configuration)
         {
             _userManager = userManager;
             _roleManager = roleManager;
             _emailService = emailService;
+            _configuration = configuration;
         }
 
         [HttpPost("register-user")]
@@ -59,11 +66,11 @@ namespace User.Mgmt.API.Controllers
                 if (!createUser.Succeeded)
                 {
                     return StatusCode(StatusCodes.Status500InternalServerError,
-                    new ResponseDto
-                    {
-                        Status = "Error",
-                        Message = "Failed to created User."
-                    });
+                            new ResponseDto
+                            {
+                                Status = "Error",
+                                Message = "Failed to created User."
+                            });
                 }
 
                 //add role to user on AspNetUserRoles table
@@ -93,20 +100,20 @@ namespace User.Mgmt.API.Controllers
                 _emailService.SendEmails(message);
 
                 return StatusCode(StatusCodes.Status200OK,
-                new ResponseDto
-                {
-                    Status = "Success",
-                    Message = $"User created and Email is sent to {user.Email} successfully."
-                });
+                        new ResponseDto
+                        {
+                            Status = "Success",
+                            Message = $"User created and Email is sent to {user.Email} successfully."
+                        });
             }
             else
             {
                 return StatusCode(StatusCodes.Status500InternalServerError,
-                new ResponseDto
-                {
-                    Status = "Error",
-                    Message = $"Role: {role} does not exist."
-                });
+                        new ResponseDto
+                        {
+                            Status = "Error",
+                            Message = $"Role: {role} does not exist."
+                        });
             }
         }
 
@@ -117,6 +124,8 @@ namespace User.Mgmt.API.Controllers
 
             if (user is not null)
             {
+                //this line confirm User’s Email and UPDATE AspNetUser table EmailConfirmed column to a ‘1’ for TRUE
+                //and the User is assigned  with the Registered Role in AspNetUserRoles table
                 var confirmEmail = await _userManager.ConfirmEmailAsync(user, token);
 
                 if (confirmEmail.Succeeded)
@@ -131,11 +140,68 @@ namespace User.Mgmt.API.Controllers
             }
 
             return StatusCode(StatusCodes.Status500InternalServerError,
-                new ResponseDto
+                    new ResponseDto
+                    {
+                        Status = "Error",
+                        Message = $"User with Email: {email} does not exist."
+                    });
+        }
+
+        [HttpPost("login-user")]
+        public async Task<IActionResult> Login([FromBody]LoginRequestDto loginRequestDto)
+        {
+            //checking user exists
+            var user = await _userManager.FindByNameAsync(loginRequestDto.Username);
+
+            //checking user's password
+            var passwordExist = await _userManager.CheckPasswordAsync(user, loginRequestDto.Password);
+
+            if (user is not null && passwordExist is true)
+            {
+                //creating a List of Claims
+                var authClaims = new List<Claim>()
                 {
-                    Status = "Error",
-                    Message = $"User with Email: {email} does not exist."
+                    new Claim(ClaimTypes.Name, user.UserName),
+                    new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+                };
+
+                //getting userRole
+                var userRoles = await _userManager.GetRolesAsync(user);
+
+                //adding roles to list of Claims
+                foreach (var role in userRoles)
+                {
+                    authClaims.Add(new Claim(ClaimTypes.Role, role));
+                }
+
+                //generating a token with Claims
+                var jwtToken = GetToken(authClaims);
+
+                return Ok(new
+                {
+                    accessToken = new JwtSecurityTokenHandler().WriteToken(jwtToken),
+                    expiration = jwtToken.ValidTo
                 });
+            }
+
+            //if user not exist, we're returning an Unauthorized result
+            return Unauthorized();
+        }
+
+        private JwtSecurityToken GetToken(List<Claim> authClaims)
+        {
+            var secretKey = Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]);
+            var authSigningKey = new SymmetricSecurityKey(secretKey);
+
+            var token = new JwtSecurityToken(
+                issuer: _configuration["JWT:ValidIssuer"],
+                audience: _configuration["ValidAudience"],
+                expires: DateTime.Now.AddHours(3),
+                claims: authClaims,
+                signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
+            );
+
+            return token;
         }
     }
     

@@ -12,14 +12,11 @@ namespace User.Mgmt.Service.Services
         {
             _emailConfig = emailConfig;
         }
-
         public void SendEmails(Message message)
         {
             var emailMessage = CreateEmailMessage(message);
             Send(emailMessage);
         }
-
-
         private MimeMessage CreateEmailMessage(Message message)
         {
             var emailMessage = new MimeMessage();
