@@ -9,7 +9,6 @@ namespace User.Mgmt.API.Controllers
     [ApiController]
     public class TestAuthorizationController : ControllerBase
     {
-        //[Authorize(Roles = "Admin")]
         [HttpGet("employees")]
         public IEnumerable<string> GetEmployees()
         {

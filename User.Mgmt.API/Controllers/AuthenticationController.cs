@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
+using System.Data;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -18,15 +19,17 @@ namespace User.Mgmt.API.Controllers
     {
         private readonly UserManager<IdentityUser> _userManager;
         private readonly RoleManager<IdentityRole> _roleManager;
+        private readonly SignInManager<IdentityUser> _signInManager;
         private readonly IEmailService _emailService;
         private readonly IConfiguration _configuration;
 
-        public AuthenticationController(UserManager<IdentityUser> userManager, RoleManager<IdentityRole> roleManager, IEmailService emailService, IConfiguration configuration)
+        public AuthenticationController(UserManager<IdentityUser> userManager, RoleManager<IdentityRole> roleManager, IEmailService emailService, IConfiguration configuration, SignInManager<IdentityUser> signInManager)
         {
             _userManager = userManager;
             _roleManager = roleManager;
             _emailService = emailService;
             _configuration = configuration;
+            _signInManager = signInManager;
         }
 
         [HttpPost("register-user")]
@@ -45,14 +48,14 @@ namespace User.Mgmt.API.Controllers
                                 });
             }
 
-            // instantiate an IdentityUser and populate registerUserDto values
+            // instantiate an IdentityUser; assign registerUserDto values to its properties
             IdentityUser user = new()
             {
                 Email = registerUserDto.Email,
                 SecurityStamp = Guid.NewGuid().ToString(),
-                UserName = registerUserDto.Username
+                UserName = registerUserDto.Username,
+                TwoFactorEnabled = true
             };
-
 
             //check if pass-in role exists
             var isRoleExists = await _roleManager.RoleExistsAsync(role);
@@ -82,7 +85,7 @@ namespace User.Mgmt.API.Controllers
                 //create a confirmationLink based of a Url.Action
                 var confirmationLink = Url.Action
                 (
-                    nameof(ConfirmEmail), //Endpoint in AuthenticationController.cs
+                    nameof(ConfirmEmail), //callBack Endpoint in AuthenticationController.cs
                     "Authentication", //"Authentication" Controller
                     new { token, email = user.Email },
                     Request.Scheme  //invoke HTTPRequest Scheme
@@ -91,11 +94,11 @@ namespace User.Mgmt.API.Controllers
                 //create a message consists of user's email, subject and the confirmationLink
                 var message = new Message
                 (
-                    new string[] { user.Email!},
+                    new string[] { user.Email! },
                     "Confirmation email link",
                     confirmationLink!
                 );
-                
+
                 //then send message with User's email
                 _emailService.SendEmails(message);
 
@@ -148,10 +151,32 @@ namespace User.Mgmt.API.Controllers
         }
 
         [HttpPost("login-user")]
-        public async Task<IActionResult> Login([FromBody]LoginRequestDto loginRequestDto)
+        public async Task<IActionResult> Login([FromBody] LoginRequestDto loginRequestDto)
         {
             //checking user exists
             var user = await _userManager.FindByNameAsync(loginRequestDto.Username);
+
+            if (user.TwoFactorEnabled is true)
+            {
+                //first sign-out current user
+                await _signInManager.SignOutAsync();
+
+                //re-sign-in User with loginRequestDto.Password
+                await _signInManager.PasswordSignInAsync(user, loginRequestDto.Password, false, false);
+
+                var twoFToken = await _userManager.GenerateTwoFactorTokenAsync(user, "Email");
+
+                var message = new Message(new string[] { user.Email! }, "OTP Confirmation", twoFToken);
+
+                _emailService.SendEmails(message);
+
+                return StatusCode(StatusCodes.Status200OK,
+                    new ResponseDto
+                    {
+                        Status = "Success",
+                        Message = $"An Email has been sent to: {user.Email} to perform an OTP (2 factor Authentication.) ."
+                    });
+            }
 
             //checking user's password
             var passwordExist = await _userManager.CheckPasswordAsync(user, loginRequestDto.Password);
@@ -175,9 +200,9 @@ namespace User.Mgmt.API.Controllers
                 }
 
                 //generating a token with Claims
-                var jwtToken = GetToken(authClaims);
+                var jwtToken = GenerateToken(authClaims);
 
-                return Ok(new
+                return Ok(new //creating anynoymous object & return this object
                 {
                     accessToken = new JwtSecurityTokenHandler().WriteToken(jwtToken),
                     expiration = jwtToken.ValidTo
@@ -188,7 +213,54 @@ namespace User.Mgmt.API.Controllers
             return Unauthorized();
         }
 
-        private JwtSecurityToken GetToken(List<Claim> authClaims)
+        [HttpPost("login-2F")]
+        public async Task<IActionResult> Login2FactorAuthn(string twoFToken, string username)
+        {
+            var user = await _userManager.FindByNameAsync(username);
+
+            var signIn = await _signInManager.TwoFactorSignInAsync(
+                                                "Email",
+                                                twoFToken,
+                                                false,
+                                                false
+            );
+
+            if (signIn.Succeeded)
+            {
+                if (user is not null)
+                {
+                    var authClaims = new List<Claim>()
+                    {
+                        new Claim(ClaimTypes.NameIdentifier, username),
+                        new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+                    };
+
+                    var userRoles = await _userManager.GetRolesAsync(user);
+
+                    foreach (var role in userRoles)
+                    {
+                        authClaims.Add(new Claim(ClaimTypes.Role, role));
+                    }
+
+                    var jwtToken = GenerateToken(authClaims);
+
+                    return Ok(new
+                    {
+                        token = new JwtSecurityTokenHandler().WriteToken(jwtToken),
+                        expiration = jwtToken.ValidTo
+                    });
+                }
+            }
+
+            return StatusCode(StatusCodes.Status404NotFound,
+            new ResponseDto
+                    {
+                        Status = "Error",
+                        Message = $"User provided an invalid Two Factor Authentication code."
+                    });
+        }
+
+        private JwtSecurityToken GenerateToken(List<Claim> authClaims)
         {
             var secretKey = Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]);
             var authSigningKey = new SymmetricSecurityKey(secretKey);
@@ -204,5 +276,5 @@ namespace User.Mgmt.API.Controllers
             return token;
         }
     }
-    
+
 }
