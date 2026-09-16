@@ -1,12 +1,14 @@
+//using Microsoft.AspNet.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using User.Mgmt.Service.Services;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+using System.Text;
 using User.Mgmt.API.DataContext;
 using User.Mgmt.Service.Models;
-using Microsoft.IdentityModel.Tokens;
-using System.Text;
-using Microsoft.OpenApi.Models;
+using User.Mgmt.Service.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -121,6 +123,11 @@ builder.Services.Configure<IdentityOptions>(options =>
     options.SignIn.RequireConfirmedEmail = true;
 });
 
+builder.Services.Configure<DataProtectionTokenProviderOptions>(options =>
+{
+    options.TokenLifespan = TimeSpan.FromHours(10);
+});
+
 builder.Services.AddControllers();
 
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
@@ -193,6 +200,8 @@ builder.Services.AddSwaggerGen(options =>
         });
     }
 );
+
+builder.Services.AddSingleton<MemoryCache>();
 
 //********** Middleware pipeline Configurations *******************************
 var app = builder.Build();

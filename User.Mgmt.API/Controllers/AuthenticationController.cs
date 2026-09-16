@@ -1,6 +1,8 @@
-﻿using Microsoft.AspNetCore.Identity;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
+using System.ComponentModel.DataAnnotations;
 using System.Data;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -156,7 +158,7 @@ namespace User.Mgmt.API.Controllers
             //checking user exists
             var user = await _userManager.FindByNameAsync(loginRequestDto.Username);
 
-            if (user.TwoFactorEnabled is true)
+            if (user.TwoFactorEnabled is false)
             {
                 //first sign-out current user
                 await _signInManager.SignOutAsync();
@@ -254,10 +256,102 @@ namespace User.Mgmt.API.Controllers
 
             return StatusCode(StatusCodes.Status404NotFound,
             new ResponseDto
+            {
+                Status = "Error",
+                Message = $"User provided an invalid Two Factor Authentication code."
+            });
+        }
+
+
+        [HttpPost("forgot-password")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ForgotPassword([Required] string email)
+        {
+            var user = await _userManager.FindByEmailAsync(email);
+
+            if (user is not null)
+            {
+                var passwordResetToken = await _userManager.GeneratePasswordResetTokenAsync(user);
+                string actionMethod = nameof(ResetPassword);
+                string controller = "Authentication";
+                object objectValue = new { passwordResetToken, email = user.Email };
+
+                var forgotPasswordLink = Url.Action(
+                    actionMethod,
+                    controller,
+                    objectValue, 
+                    Request.Scheme
+                );
+
+                IEnumerable<string> emailTo = new string[] { user.Email };
+
+                var subject = "Forgot Passsword Link:";
+
+                var message = new Message(emailTo, subject, forgotPasswordLink!);
+
+                _emailService.SendEmails(message);
+
+                return StatusCode(StatusCodes.Status200OK,
+                    new ResponseDto
                     {
-                        Status = "Error",
-                        Message = $"User provided an invalid Two Factor Authentication code."
+                        Status = "Success",
+                        Message = $"Password reset request link is sent to: {email}."
                     });
+            }
+
+            return StatusCode(StatusCodes.Status404NotFound,
+                new ResponseDto
+                {
+                    Status = "Error",
+                    Message = $"User's email: {email} not found in system."
+                });
+        }
+
+
+        [HttpGet("reset-password")]
+        public async Task<IActionResult> ResetPassword(string passwordResetToken, string email)
+        {
+            var resetPasswordModel = new ResetPasswordDto { Token = passwordResetToken, Email = email};
+
+            return Ok(new { resetPasswordModel });
+        }
+
+
+        [HttpPost]
+        [Route("reset-password")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ResetPassword(ResetPasswordDto resetPasswordDto)
+        {
+            var user = await _userManager.FindByEmailAsync(resetPasswordDto.Email);
+
+            if (user is not null) 
+            {
+                var resetPasswordResult = await _userManager.ResetPasswordAsync(user, resetPasswordDto.Token, resetPasswordDto.Password);
+                
+                if (resetPasswordResult.Succeeded is false)
+                {
+                    foreach (var error in resetPasswordResult.Errors)
+                    {
+                        ModelState.AddModelError(error.Code, error.Description);
+                    }
+
+                    return Ok(ModelState);
+                }
+
+                return StatusCode(StatusCodes.Status200OK,
+                    new ResponseDto
+                    {
+                        Status = "Success",
+                        Message = $"Password is reset/changed."
+                    });
+            }
+
+            return StatusCode(StatusCodes.Status404NotFound,
+                new ResponseDto
+                {
+                    Status = "Error",
+                    Message = $"User with Email not found. Password reset failed."
+                });
         }
 
         private JwtSecurityToken GenerateToken(List<Claim> authClaims)
