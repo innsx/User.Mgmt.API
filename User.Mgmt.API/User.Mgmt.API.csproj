@@ -22,4 +22,8 @@
     <ProjectReference Include="..\User.Mgmt.Service\User.Mgmt.Service.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Models\" />
+  </ItemGroup>
+
 </Project>

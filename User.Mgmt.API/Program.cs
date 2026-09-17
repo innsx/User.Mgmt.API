@@ -117,6 +117,8 @@ builder.Services.AddSingleton(emailConfig);
 //That same instance is shared across all classes handling that specific request
 builder.Services.AddScoped<IEmailService, EmailService>();
 
+builder.Services.AddScoped<IUserMgmtService, UserMgmtService>();
+
 //forces users to verify their email address before they are allowed to sign into their application,
 builder.Services.Configure<IdentityOptions>(options =>
 {

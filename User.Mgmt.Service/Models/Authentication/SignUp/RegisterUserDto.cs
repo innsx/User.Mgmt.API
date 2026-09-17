@@ -1,6 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 
-namespace User.Mgmt.API.Models.SignUp
+namespace User.Mgmt.Service.Models.Authentication.SignUp
 {
     public class RegisterUserDto
     {
@@ -13,5 +13,8 @@ namespace User.Mgmt.API.Models.SignUp
 
         [Required(ErrorMessage = "Password is required.")]
         public string Password { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Role is required.")]
+        public List<string>? Roles { get; set; } = new List<string>();
     }
 }

@@ -1,6 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 
-namespace User.Mgmt.API.Models.SignUp
+namespace User.Mgmt.Service.Models.Authentication.SignUp
 {
     public class ResetPasswordDto
     {

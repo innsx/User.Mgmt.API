@@ -8,9 +8,9 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using User.Mgmt.API.Models;
-using User.Mgmt.API.Models.Login;
-using User.Mgmt.API.Models.SignUp;
 using User.Mgmt.Service.Models;
+using User.Mgmt.Service.Models.Authentication.Login;
+using User.Mgmt.Service.Models.Authentication.SignUp;
 using User.Mgmt.Service.Services;
 
 namespace User.Mgmt.API.Controllers
@@ -23,103 +23,65 @@ namespace User.Mgmt.API.Controllers
         private readonly RoleManager<IdentityRole> _roleManager;
         private readonly SignInManager<IdentityUser> _signInManager;
         private readonly IEmailService _emailService;
+        private readonly IUserMgmtService _userMgmtService;
         private readonly IConfiguration _configuration;
 
-        public AuthenticationController(UserManager<IdentityUser> userManager, RoleManager<IdentityRole> roleManager, IEmailService emailService, IConfiguration configuration, SignInManager<IdentityUser> signInManager)
+        public AuthenticationController(UserManager<IdentityUser> userManager,
+                                        RoleManager<IdentityRole> roleManager,  
+                                        IEmailService emailService,
+                                        SignInManager<IdentityUser> signInManager,
+                                        IUserMgmtService userMgmtService,
+                                        IConfiguration configuration)
         {
             _userManager = userManager;
             _roleManager = roleManager;
-            _emailService = emailService;
-            _configuration = configuration;
             _signInManager = signInManager;
+            _emailService = emailService;
+            _userMgmtService = userMgmtService;
+            _configuration = configuration;
         }
 
         [HttpPost("register-user")]
-        public async Task<IActionResult> Register([FromBody] RegisterUserDto registerUserDto, string role)
+        public async Task<IActionResult> Register([FromBody] RegisterUserDto registerUserDto)
         {
-            //check user exists in DB
-            var userExists = await _userManager.FindByEmailAsync(registerUserDto.Email);
+            var accessToken = await _userMgmtService.CreateUserWithTokenAsnyc(registerUserDto);
 
-            if (userExists is not null)
+            if (accessToken.IsSuccess is true)
             {
-                return StatusCode(StatusCodes.Status403Forbidden,
-                                new ResponseDto
-                                {
-                                    Status = "Error",
-                                    Message = "User already exits."
-                                });
-            }
+                await _userMgmtService.AssignRoleToUserAsync(registerUserDto.Roles!, accessToken.Response!.User!);
 
-            // instantiate an IdentityUser; assign registerUserDto values to its properties
-            IdentityUser user = new()
-            {
-                Email = registerUserDto.Email,
-                SecurityStamp = Guid.NewGuid().ToString(),
-                UserName = registerUserDto.Username,
-                TwoFactorEnabled = true
-            };
+                var actionMethod = nameof(ConfirmEmail);
+                var controller = "Authentication";
+                object responseObject = new { accessToken.Response.Token, registerUserDto.Email };
 
-            //check if pass-in role exists
-            var isRoleExists = await _roleManager.RoleExistsAsync(role);
+                var confirmationLink = Url.Action(actionMethod, controller, responseObject, Request.Scheme);
 
-            //if role exists
-            if (isRoleExists is true)
-            {
-                //create user
-                var createUser = await _userManager.CreateAsync(user, registerUserDto.Password);
-
-                if (!createUser.Succeeded)
-                {
-                    return StatusCode(StatusCodes.Status500InternalServerError,
-                            new ResponseDto
-                            {
-                                Status = "Error",
-                                Message = "Failed to created User."
-                            });
-                }
-
-                //add role to user on AspNetUserRoles table
-                await _userManager.AddToRoleAsync(user, role);
-
-                //Generate a Token for User with this email
-                var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
-
-                //create a confirmationLink based of a Url.Action
-                var confirmationLink = Url.Action
-                (
-                    nameof(ConfirmEmail), //callBack Endpoint in AuthenticationController.cs
-                    "Authentication", //"Authentication" Controller
-                    new { token, email = user.Email },
-                    Request.Scheme  //invoke HTTPRequest Scheme
-                );
-
-                //create a message consists of user's email, subject and the confirmationLink
-                var message = new Message
-                (
-                    new string[] { user.Email! },
+                var message = new Message(new string[] {
+                    registerUserDto.Email! },
                     "Confirmation email link",
-                    confirmationLink!
-                );
+                    confirmationLink!);
 
-                //then send message with User's email
                 _emailService.SendEmails(message);
 
                 return StatusCode(StatusCodes.Status200OK,
-                        new ResponseDto
-                        {
-                            Status = "Success",
-                            Message = $"User created and Email is sent to {user.Email} successfully."
-                        });
+                    new ResponseDto
+                    {
+                        Status = "Success",
+                        Message = $"Email verified successfully.",
+                        IsSuccess = true
+                    });
+
             }
-            else
-            {
-                return StatusCode(StatusCodes.Status500InternalServerError,
-                        new ResponseDto
-                        {
-                            Status = "Error",
-                            Message = $"Role: {role} does not exist."
-                        });
-            }
+
+            return StatusCode(
+                    StatusCodes.Status500InternalServerError,
+                    new ResponseDto 
+                    { 
+                        Status = "Error",
+                        Message = accessToken.Message, 
+                        IsSuccess = accessToken.IsSuccess 
+                    });
+
         }
 
         [HttpGet("confirm-email")]
@@ -139,7 +101,8 @@ namespace User.Mgmt.API.Controllers
                         new ResponseDto
                         {
                             Status = "Success",
-                            Message = $"Email: {email} verified successfully."
+                            Message = $"Email: {email} verified successfully.",
+                            IsSuccess = true
                         });
                 }
             }
@@ -148,7 +111,8 @@ namespace User.Mgmt.API.Controllers
                     new ResponseDto
                     {
                         Status = "Error",
-                        Message = $"User with Email: {email} does not exist."
+                        Message = $"User with Email: {email} does not exist.",
+                        IsSuccess = false
                     });
         }
 
@@ -176,7 +140,8 @@ namespace User.Mgmt.API.Controllers
                     new ResponseDto
                     {
                         Status = "Success",
-                        Message = $"An Email has been sent to: {user.Email} to perform an OTP (2 factor Authentication.) ."
+                        Message = $"An Email has been sent to: {user.Email} to perform an OTP (2 factor Authentication.) .",
+                        IsSuccess = true
                     });
             }
 
@@ -258,7 +223,8 @@ namespace User.Mgmt.API.Controllers
             new ResponseDto
             {
                 Status = "Error",
-                Message = $"User provided an invalid Two Factor Authentication code."
+                Message = $"User provided an invalid Two Factor Authentication code.",
+                IsSuccess = true
             });
         }
 
@@ -279,7 +245,7 @@ namespace User.Mgmt.API.Controllers
                 var forgotPasswordLink = Url.Action(
                     actionMethod,
                     controller,
-                    objectValue, 
+                    objectValue,
                     Request.Scheme
                 );
 
@@ -295,7 +261,8 @@ namespace User.Mgmt.API.Controllers
                     new ResponseDto
                     {
                         Status = "Success",
-                        Message = $"Password reset request link is sent to: {email}."
+                        Message = $"Password reset request link is sent to: {email}.",
+                        IsSuccess = true
                     });
             }
 
@@ -303,7 +270,8 @@ namespace User.Mgmt.API.Controllers
                 new ResponseDto
                 {
                     Status = "Error",
-                    Message = $"User's email: {email} not found in system."
+                    Message = $"User's email: {email} not found in system.",
+                    IsSuccess = false
                 });
         }
 
@@ -311,7 +279,7 @@ namespace User.Mgmt.API.Controllers
         [HttpGet("reset-password")]
         public async Task<IActionResult> ResetPassword(string passwordResetToken, string email)
         {
-            var resetPasswordModel = new ResetPasswordDto { Token = passwordResetToken, Email = email};
+            var resetPasswordModel = new ResetPasswordDto { Token = passwordResetToken, Email = email };
 
             return Ok(new { resetPasswordModel });
         }
@@ -324,10 +292,10 @@ namespace User.Mgmt.API.Controllers
         {
             var user = await _userManager.FindByEmailAsync(resetPasswordDto.Email);
 
-            if (user is not null) 
+            if (user is not null)
             {
                 var resetPasswordResult = await _userManager.ResetPasswordAsync(user, resetPasswordDto.Token, resetPasswordDto.Password);
-                
+
                 if (resetPasswordResult.Succeeded is false)
                 {
                     foreach (var error in resetPasswordResult.Errors)
@@ -342,7 +310,8 @@ namespace User.Mgmt.API.Controllers
                     new ResponseDto
                     {
                         Status = "Success",
-                        Message = $"Password is reset/changed."
+                        Message = $"Password is reset/changed.",
+                        IsSuccess = true
                     });
             }
 
@@ -350,7 +319,8 @@ namespace User.Mgmt.API.Controllers
                 new ResponseDto
                 {
                     Status = "Error",
-                    Message = $"User with Email not found. Password reset failed."
+                    Message = $"User with Email not found. Password reset failed.",
+                    IsSuccess = false
                 });
         }
 

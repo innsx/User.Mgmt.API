@@ -1,6 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 
-namespace User.Mgmt.API.Models.Login
+namespace User.Mgmt.Service.Models.Authentication.Login
 {
     public class LoginRequestDto
     {
