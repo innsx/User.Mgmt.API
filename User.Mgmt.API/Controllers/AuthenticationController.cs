@@ -119,62 +119,64 @@ namespace User.Mgmt.API.Controllers
         [HttpPost("login-user")]
         public async Task<IActionResult> Login([FromBody] LoginRequestDto loginRequestDto)
         {
-            //checking user exists
-            var user = await _userManager.FindByNameAsync(loginRequestDto.Username);
+            var oPT2FactorResponse = await _userMgmtService.GetOTPByLoginAsync(loginRequestDto);
 
-            if (user.TwoFactorEnabled is false)
+            if (oPT2FactorResponse.Response is not null)
             {
-                //first sign-out current user
-                await _signInManager.SignOutAsync();
+                //checking user exists
+                var user = oPT2FactorResponse.Response!.User;
 
-                //re-sign-in User with loginRequestDto.Password
-                await _signInManager.PasswordSignInAsync(user, loginRequestDto.Password, false, false);
+                if (user.TwoFactorEnabled is true)
+                {
+                    var twoFToken = oPT2FactorResponse.Response.Token;
 
-                var twoFToken = await _userManager.GenerateTwoFactorTokenAsync(user, "Email");
+                    var message = new Message(
+                        new string[] { user.Email! },
+                        "OTP Confirmation",
+                        twoFToken);
 
-                var message = new Message(new string[] { user.Email! }, "OTP Confirmation", twoFToken);
+                    _emailService.SendEmails(message);
 
-                _emailService.SendEmails(message);
+                    return StatusCode(StatusCodes.Status200OK,
+                        new ResponseDto
+                        {
+                            Status = "Success",
+                            Message = $"An Email has been sent to: {user.Email} to perform an OTP (2 factor Authentication.) .",
+                            IsSuccess = oPT2FactorResponse.IsSuccess
+                        });
+                }
 
-                return StatusCode(StatusCodes.Status200OK,
-                    new ResponseDto
-                    {
-                        Status = "Success",
-                        Message = $"An Email has been sent to: {user.Email} to perform an OTP (2 factor Authentication.) .",
-                        IsSuccess = true
-                    });
-            }
+                //checking user's password
+                var passwordExist = await _userManager.CheckPasswordAsync(user, loginRequestDto.Password);
 
-            //checking user's password
-            var passwordExist = await _userManager.CheckPasswordAsync(user, loginRequestDto.Password);
-
-            if (user is not null && passwordExist is true)
-            {
-                //creating a List of Claims
-                var authClaims = new List<Claim>()
+                if (user is not null && passwordExist is true)
+                {
+                    //creating a List of Claims
+                    var authClaims = new List<Claim>()
                 {
                     new Claim(ClaimTypes.Name, user.UserName),
                     new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
                 };
 
-                //getting userRole
-                var userRoles = await _userManager.GetRolesAsync(user);
+                    //getting userRole
+                    var userRoles = await _userManager.GetRolesAsync(user);
 
-                //adding roles to list of Claims
-                foreach (var role in userRoles)
-                {
-                    authClaims.Add(new Claim(ClaimTypes.Role, role));
+                    //adding roles to list of Claims
+                    foreach (var role in userRoles)
+                    {
+                        authClaims.Add(new Claim(ClaimTypes.Role, role));
+                    }
+
+                    //generating a token with Claims
+                    var jwtToken = GenerateToken(authClaims);
+
+                    return Ok(new //creating anynoymous object & return this object
+                    {
+                        accessToken = new JwtSecurityTokenHandler().WriteToken(jwtToken),
+                        expiration = jwtToken.ValidTo
+                    });
                 }
-
-                //generating a token with Claims
-                var jwtToken = GenerateToken(authClaims);
-
-                return Ok(new //creating anynoymous object & return this object
-                {
-                    accessToken = new JwtSecurityTokenHandler().WriteToken(jwtToken),
-                    expiration = jwtToken.ValidTo
-                });
-            }
+            }            
 
             //if user not exist, we're returning an Unauthorized result
             return Unauthorized();
