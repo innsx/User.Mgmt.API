@@ -13,5 +13,6 @@ namespace User.Mgmt.Service.Services
         Task<APIResponseDto<LoginUser2FTokenResponseDto>> GetOTPByLoginAsync(LoginRequestDto loginRequestDto);
         Task<APIResponseDto<LoginResponseDto>> GetJwtTokenAsync(ApplicationUserDto user);
         Task<APIResponseDto<LoginResponseDto>> LoginUserWith2FTokenAsnyc(string twoFToken, string userName);
+        Task<APIResponseDto<LoginResponseDto>> RenewAccessTokenAsync(LoginResponseDto token);
     }
 }

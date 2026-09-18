@@ -1,13 +1,10 @@
-﻿using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Identity;
+﻿using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
-using System.Data;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
-using User.Mgmt.API.Models;
 using User.Mgmt.Service.Models;
 using User.Mgmt.Service.Models.Authentication.Login;
 using User.Mgmt.Service.Models.Authentication.SignUp;
@@ -288,7 +285,7 @@ namespace User.Mgmt.Service.Services
             }
         }
 
-        public string GenereateRefreshToken()
+        private string GenereateRefreshToken()
         {
             var randomNumber = new byte[64];
             var range = RandomNumberGenerator.Create();
@@ -338,5 +335,52 @@ namespace User.Mgmt.Service.Services
             };
         }
 
+        public async Task<APIResponseDto<LoginResponseDto>> RenewAccessTokenAsync(LoginResponseDto tokens)
+        {
+            var accessToken = tokens.AccessToken;
+
+            var refreshToken = tokens.RefreshToken;
+
+            var principal = GetClaimsPrincipal(accessToken.TokenContext!);
+
+            var user = await _userManager.FindByNameAsync(principal.Identity!.Name);
+
+            if (refreshToken!.TokenContext != user.RefreshToken && refreshToken.ExpiryTokenDate <= DateTime.Now)
+            {
+                return new APIResponseDto<LoginResponseDto>
+                {
+                    IsSuccess = false,
+                    StatusCode = 400,
+                    Message = $"Invalid refresh Token or expired. User must re-login.",
+                    
+                };
+            }
+            
+            var response = await GetJwtTokenAsync(user);
+
+            return response;
+        }
+
+        private ClaimsPrincipal GetClaimsPrincipal(string accessToken)
+        {
+            var tokenValidationParameter = new TokenValidationParameters
+            {
+                ValidateAudience = false,
+                ValidateIssuer = false,
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"])),
+                ValidateLifetime = false                
+            };
+
+            var tokenHandler = new JwtSecurityTokenHandler();
+
+            var principal = tokenHandler.ValidateToken(
+                                            accessToken, 
+                                            tokenValidationParameter, 
+                                            out SecurityToken securityToken
+            );
+
+            return principal;
+        }
     }
 }

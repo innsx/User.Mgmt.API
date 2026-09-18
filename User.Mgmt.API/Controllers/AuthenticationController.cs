@@ -6,6 +6,7 @@ using User.Mgmt.API.Models;
 using User.Mgmt.Service.Models;
 using User.Mgmt.Service.Models.Authentication.Login;
 using User.Mgmt.Service.Models.Authentication.SignUp;
+using User.Mgmt.Service.Models.Authentication.UserResponse;
 using User.Mgmt.Service.Services;
 using UserMgmt.Data.Models;
 
@@ -278,6 +279,26 @@ namespace User.Mgmt.API.Controllers
                 });
         }
 
+
+        [HttpPost]
+        [Route("refresh-token")]
+        public async Task<IActionResult> RefreshToken(LoginResponseDto tokens)
+        {
+            var response = await _userMgmtService.RenewAccessTokenAsync(tokens);
+
+            if (response.IsSuccess is true)
+            {
+                return Ok(response);
+            }
+
+            return StatusCode(StatusCodes.Status404NotFound,
+                new ResponseDto
+                {
+                    Status = "Error",
+                    Message = $"Token not found.",
+                    IsSuccess = false
+                });
+        }
     }
 
 }
