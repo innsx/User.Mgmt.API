@@ -1,17 +1,13 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.IdentityModel.Tokens;
 using System.ComponentModel.DataAnnotations;
-using System.Data;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Text;
 using User.Mgmt.API.Models;
 using User.Mgmt.Service.Models;
 using User.Mgmt.Service.Models.Authentication.Login;
 using User.Mgmt.Service.Models.Authentication.SignUp;
 using User.Mgmt.Service.Services;
+using UserMgmt.Data.Models;
 
 namespace User.Mgmt.API.Controllers
 {
@@ -19,26 +15,23 @@ namespace User.Mgmt.API.Controllers
     [ApiController]
     public class AuthenticationController : ControllerBase
     {
-        private readonly UserManager<IdentityUser> _userManager;
+        private readonly UserManager<ApplicationUserDto> _userManager;
         private readonly RoleManager<IdentityRole> _roleManager;
-        private readonly SignInManager<IdentityUser> _signInManager;
+        private readonly SignInManager<ApplicationUserDto> _signInManager;
         private readonly IEmailService _emailService;
         private readonly IUserMgmtService _userMgmtService;
-        private readonly IConfiguration _configuration;
 
-        public AuthenticationController(UserManager<IdentityUser> userManager,
-                                        RoleManager<IdentityRole> roleManager,  
+        public AuthenticationController(UserManager<ApplicationUserDto> userManager,
+                                        RoleManager<IdentityRole> roleManager,
                                         IEmailService emailService,
-                                        SignInManager<IdentityUser> signInManager,
-                                        IUserMgmtService userMgmtService,
-                                        IConfiguration configuration)
+                                        SignInManager<ApplicationUserDto> signInManager,
+                                        IUserMgmtService userMgmtService)
         {
             _userManager = userManager;
             _roleManager = roleManager;
             _signInManager = signInManager;
             _emailService = emailService;
             _userMgmtService = userMgmtService;
-            _configuration = configuration;
         }
 
         [HttpPost("register-user")]
@@ -48,38 +41,43 @@ namespace User.Mgmt.API.Controllers
 
             if (accessToken.IsSuccess is true)
             {
-                await _userMgmtService.AssignRoleToUserAsync(registerUserDto.Roles!, accessToken.Response!.User!);
+                var isRoleAssigned = await _userMgmtService.AssignRoleToUserAsync(registerUserDto.Roles!, accessToken.Response!.User!);
 
-                var actionMethod = nameof(ConfirmEmail);
-                var controller = "Authentication";
-                object responseObject = new { accessToken.Response.Token, registerUserDto.Email };
+                if (isRoleAssigned.IsSuccess is true)
+                {
+                    var actionMethod = nameof(ConfirmEmail);
+                    var controller = "Authentication";
+                    object responseObject = new { accessToken.Response.Token, registerUserDto.Email };
 
-                var confirmationLink = Url.Action(actionMethod, controller, responseObject, Request.Scheme);
+                    var confirmationLink = Url.Action(actionMethod, controller, responseObject, Request.Scheme);
 
-                var message = new Message(new string[] {
+                    var message = new Message(new string[] {
                     registerUserDto.Email! },
-                    "Confirmation email link",
-                    confirmationLink!);
+                        "Confirmation email link",
+                        confirmationLink!);
 
-                _emailService.SendEmails(message);
+                    var isSendEmailSuccessfull = _emailService.SendEmails(message);
 
-                return StatusCode(StatusCodes.Status200OK,
-                    new ResponseDto
+                    if (isSendEmailSuccessfull is true)
                     {
-                        Status = "Success",
-                        Message = $"Email verified successfully.",
-                        IsSuccess = true
-                    });
-
+                        return StatusCode(StatusCodes.Status200OK,
+                            new ResponseDto
+                            {
+                                Status = "Success",
+                                Message = $"Email sent to {registerUserDto.Email}. Open Link to verify.",
+                                IsSuccess = true
+                            });
+                    }
+                }         
             }
 
             return StatusCode(
                     StatusCodes.Status500InternalServerError,
-                    new ResponseDto 
-                    { 
+                    new ResponseDto
+                    {
                         Status = "Error",
-                        Message = accessToken.Message, 
-                        IsSuccess = accessToken.IsSuccess 
+                        Message = accessToken.Message,
+                        IsSuccess = accessToken.IsSuccess
                     });
 
         }
@@ -123,16 +121,15 @@ namespace User.Mgmt.API.Controllers
 
             if (oPT2FactorResponse.Response is not null)
             {
-                //checking user exists
-                var user = oPT2FactorResponse.Response!.User;
+                var user = oPT2FactorResponse.Response.User;
 
                 if (user.TwoFactorEnabled is true)
                 {
-                    var twoFToken = oPT2FactorResponse.Response.Token;
+                    var twoFToken = oPT2FactorResponse.Response.TwoFToken;
 
                     var message = new Message(
                         new string[] { user.Email! },
-                        "OTP Confirmation",
+                        "OTP Email Confirmation",
                         twoFToken);
 
                     _emailService.SendEmails(message);
@@ -151,32 +148,11 @@ namespace User.Mgmt.API.Controllers
 
                 if (user is not null && passwordExist is true)
                 {
-                    //creating a List of Claims
-                    var authClaims = new List<Claim>()
-                {
-                    new Claim(ClaimTypes.Name, user.UserName),
-                    new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
-                };
+                    var jwtToken = await _userMgmtService.GetJwtTokenAsync(user);
 
-                    //getting userRole
-                    var userRoles = await _userManager.GetRolesAsync(user);
-
-                    //adding roles to list of Claims
-                    foreach (var role in userRoles)
-                    {
-                        authClaims.Add(new Claim(ClaimTypes.Role, role));
-                    }
-
-                    //generating a token with Claims
-                    var jwtToken = GenerateToken(authClaims);
-
-                    return Ok(new //creating anynoymous object & return this object
-                    {
-                        accessToken = new JwtSecurityTokenHandler().WriteToken(jwtToken),
-                        expiration = jwtToken.ValidTo
-                    });
+                    return Ok(jwtToken);
                 }
-            }            
+            }
 
             //if user not exist, we're returning an Unauthorized result
             return Unauthorized();
@@ -198,26 +174,9 @@ namespace User.Mgmt.API.Controllers
             {
                 if (user is not null)
                 {
-                    var authClaims = new List<Claim>()
-                    {
-                        new Claim(ClaimTypes.NameIdentifier, username),
-                        new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
-                    };
+                    var jwtTokenResponse = await _userMgmtService.GetJwtTokenAsync(user);
 
-                    var userRoles = await _userManager.GetRolesAsync(user);
-
-                    foreach (var role in userRoles)
-                    {
-                        authClaims.Add(new Claim(ClaimTypes.Role, role));
-                    }
-
-                    var jwtToken = GenerateToken(authClaims);
-
-                    return Ok(new
-                    {
-                        token = new JwtSecurityTokenHandler().WriteToken(jwtToken),
-                        expiration = jwtToken.ValidTo
-                    });
+                    return Ok(jwtTokenResponse);
                 }
             }
 
@@ -326,21 +285,6 @@ namespace User.Mgmt.API.Controllers
                 });
         }
 
-        private JwtSecurityToken GenerateToken(List<Claim> authClaims)
-        {
-            var secretKey = Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]);
-            var authSigningKey = new SymmetricSecurityKey(secretKey);
-
-            var token = new JwtSecurityToken(
-                issuer: _configuration["JWT:ValidIssuer"],
-                audience: _configuration["JWT:ValidAudience"],
-                expires: DateTime.Now.AddHours(3),
-                claims: authClaims,
-                signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
-            );
-
-            return token;
-        }
     }
 
 }

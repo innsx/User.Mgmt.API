@@ -12,11 +12,23 @@ namespace User.Mgmt.Service.Services
         {
             _emailConfig = emailConfig;
         }
-        public void SendEmails(Message message)
+
+        public bool SendEmails(Message message)
         {
             var emailMessage = CreateEmailMessage(message);
-            Send(emailMessage);
+
+            if (emailMessage != null)
+            {
+                var isSendSuccessful = Send(emailMessage);
+
+                if (isSendSuccessful is true)
+                {
+                    return true;
+                }
+            }  
+            return false;
         }
+
         private MimeMessage CreateEmailMessage(Message message)
         {
             var emailMessage = new MimeMessage();
@@ -32,7 +44,7 @@ namespace User.Mgmt.Service.Services
             return emailMessage;
         }
 
-        private void Send(MimeMessage mailMessage)
+        private bool Send(MimeMessage mailMessage)
         {
             using var smtpClient = new SmtpClient();
 
@@ -43,6 +55,8 @@ namespace User.Mgmt.Service.Services
                 smtpClient.Authenticate(_emailConfig.Username, _emailConfig.Password);
 
                 smtpClient.Send(mailMessage);
+
+                return true;
             }
             catch
             {

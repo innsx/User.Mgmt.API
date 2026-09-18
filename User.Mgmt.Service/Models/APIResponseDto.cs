@@ -1,6 +1,6 @@
 ﻿namespace User.Mgmt.Service.Models
 {
-    public class APIResponse<T>
+    public class APIResponseDto<T>
     {
         public bool IsSuccess { get; set; } = false;
         public string Message { get; set; }= string.Empty;

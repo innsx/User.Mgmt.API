@@ -6,9 +6,10 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Text;
-using User.Mgmt.API.DataContext;
+using User.Mgmt.Data.DataContext;
 using User.Mgmt.Service.Models;
 using User.Mgmt.Service.Services;
+using UserMgmt.Data.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,7 +25,7 @@ builder.Services.AddDbContext<AppDbDataContext>(options =>
 
 // Registers the core Identity services for the specified user and role classes,
 //      enabling user management, sign-in, and role features
-builder.Services.AddIdentity<IdentityUser, IdentityRole>()
+builder.Services.AddIdentity<ApplicationUserDto, IdentityRole>()
 
                 //Tells Identity to use your Entity Framework Core database context (AppDbDataContext)
                 //  to save user and role data to the database.

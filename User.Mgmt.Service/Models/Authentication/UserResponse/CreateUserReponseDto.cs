@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Identity;
+﻿using UserMgmt.Data.Models;
 
 namespace User.Mgmt.Service.Models.Authentication.UserResponse
 {
@@ -6,7 +6,7 @@ namespace User.Mgmt.Service.Models.Authentication.UserResponse
     {
         public string? Token { get; set; }
 
-        public IdentityUser? User { get; set; }
+        public ApplicationUserDto? User { get; set; }
 
         public bool IsSuccess { get; set; }
     }

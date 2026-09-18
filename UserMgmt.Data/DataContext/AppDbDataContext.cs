@@ -1,10 +1,11 @@
 ﻿using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using UserMgmt.Data.Models;
 
-namespace User.Mgmt.API.DataContext
+namespace User.Mgmt.Data.DataContext
 {
-    public class AppDbDataContext : IdentityDbContext<IdentityUser>
+    public class AppDbDataContext : IdentityDbContext<ApplicationUserDto>
     {
         public AppDbDataContext(DbContextOptions<AppDbDataContext> options) : base(options)
         {
