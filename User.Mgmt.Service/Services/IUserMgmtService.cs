@@ -1,5 +1,4 @@
-﻿using Microsoft.IdentityModel.JsonWebTokens;
-using User.Mgmt.Service.Models;
+﻿using User.Mgmt.Service.Models;
 using User.Mgmt.Service.Models.Authentication.Login;
 using User.Mgmt.Service.Models.Authentication.SignUp;
 using User.Mgmt.Service.Models.Authentication.UserResponse;
@@ -11,7 +10,8 @@ namespace User.Mgmt.Service.Services
     {
         Task<APIResponseDto<CreateUserReponseDto>> CreateUserWithTokenAsnyc(RegisterUserDto registerUserDto);
         Task<APIResponseDto<List<string>>> AssignRoleToUserAsync(List<string> roles, ApplicationUserDto user);
-        Task<APIResponseDto<LoginOTPResponseDto>> GetOTPByLoginAsync(LoginRequestDto loginRequestDto);
-        Task<APIResponseDto<JwtTokenResponseDto>> GetJwtTokenAsync(ApplicationUserDto user);
+        Task<APIResponseDto<LoginUser2FTokenResponseDto>> GetOTPByLoginAsync(LoginRequestDto loginRequestDto);
+        Task<APIResponseDto<LoginResponseDto>> GetJwtTokenAsync(ApplicationUserDto user);
+        Task<APIResponseDto<LoginResponseDto>> LoginUserWith2FTokenAsnyc(string twoFToken, string userName);
     }
 }

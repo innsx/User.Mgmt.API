@@ -16,20 +16,14 @@ namespace User.Mgmt.API.Controllers
     public class AuthenticationController : ControllerBase
     {
         private readonly UserManager<ApplicationUserDto> _userManager;
-        private readonly RoleManager<IdentityRole> _roleManager;
-        private readonly SignInManager<ApplicationUserDto> _signInManager;
         private readonly IEmailService _emailService;
         private readonly IUserMgmtService _userMgmtService;
 
         public AuthenticationController(UserManager<ApplicationUserDto> userManager,
-                                        RoleManager<IdentityRole> roleManager,
                                         IEmailService emailService,
-                                        SignInManager<ApplicationUserDto> signInManager,
                                         IUserMgmtService userMgmtService)
         {
             _userManager = userManager;
-            _roleManager = roleManager;
-            _signInManager = signInManager;
             _emailService = emailService;
             _userMgmtService = userMgmtService;
         }
@@ -161,32 +155,20 @@ namespace User.Mgmt.API.Controllers
         [HttpPost("login-2F")]
         public async Task<IActionResult> Login2FactorAuthn(string twoFToken, string username)
         {
-            var user = await _userManager.FindByNameAsync(username);
+            var loginUser = await _userMgmtService.LoginUserWith2FTokenAsnyc(twoFToken, username);
 
-            var signIn = await _signInManager.TwoFactorSignInAsync(
-                                                "Email",
-                                                twoFToken,
-                                                false,
-                                                false
-            );
-
-            if (signIn.Succeeded)
+            if (loginUser.IsSuccess is true)
             {
-                if (user is not null)
-                {
-                    var jwtTokenResponse = await _userMgmtService.GetJwtTokenAsync(user);
-
-                    return Ok(jwtTokenResponse);
-                }
+                return Ok(loginUser);
             }
 
             return StatusCode(StatusCodes.Status404NotFound,
-            new ResponseDto
-            {
-                Status = "Error",
-                Message = $"User provided an invalid Two Factor Authentication code.",
-                IsSuccess = true
-            });
+                new ResponseDto
+                {
+                    Status = "Error",
+                    Message = $"An invalid OTP (2 factor Token.)",
+                    IsSuccess = false
+                });
         }
 
 
@@ -216,14 +198,25 @@ namespace User.Mgmt.API.Controllers
 
                 var message = new Message(emailTo, subject, forgotPasswordLink!);
 
-                _emailService.SendEmails(message);
+                var isEmailSent =_emailService.SendEmails(message);
 
-                return StatusCode(StatusCodes.Status200OK,
+                if (isEmailSent is true)
+                {
+                    return StatusCode(StatusCodes.Status200OK,
                     new ResponseDto
                     {
                         Status = "Success",
                         Message = $"Password reset request link is sent to: {email}.",
                         IsSuccess = true
+                    });
+                }
+
+                return StatusCode(StatusCodes.Status200OK,
+                    new ResponseDto
+                    {
+                        Status = "Error",
+                        Message = $"Failed to send an email to: {email}.",
+                        IsSuccess = false
                     });
             }
 

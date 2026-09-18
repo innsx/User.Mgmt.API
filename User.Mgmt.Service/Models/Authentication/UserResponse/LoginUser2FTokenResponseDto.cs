@@ -3,7 +3,7 @@ using UserMgmt.Data.Models;
 
 namespace User.Mgmt.Service.Models.Authentication.UserResponse
 {
-    public class LoginOTPResponseDto
+    public class LoginUser2FTokenResponseDto
     {
         public string TwoFToken { get; set; } = null!;
         public bool IsTwoFactorEnable { get; set; }

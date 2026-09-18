@@ -1,10 +1,13 @@
-﻿using Microsoft.AspNetCore.Identity;
+﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 using System.Data;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
+using User.Mgmt.API.Models;
 using User.Mgmt.Service.Models;
 using User.Mgmt.Service.Models.Authentication.Login;
 using User.Mgmt.Service.Models.Authentication.SignUp;
@@ -139,32 +142,37 @@ namespace User.Mgmt.Service.Services
             }
         }
 
-        public async Task<APIResponseDto<JwtTokenResponseDto>> GetJwtTokenAsync(ApplicationUserDto user)
+        public async Task<APIResponseDto<LoginResponseDto>> GetJwtTokenAsync(ApplicationUserDto user)
         {
             List<Claim> authClaims = await CreateClaimsAsnyc(user);
 
             var accessJwtToken = GenerateToken(authClaims);
 
-            if (accessJwtToken is not null)
+            _ = int.TryParse(_configuration["JWT:RefreshTokenValidity"], out int refreshTokenValidity);
+
+            user.RefreshToken = GenereateRefreshToken();
+            user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(refreshTokenValidity);
+
+            await _userManager.UpdateAsync(user);
+
+            return new APIResponseDto<LoginResponseDto>
             {
-                return new APIResponseDto<JwtTokenResponseDto>
+                IsSuccess = true,
+                StatusCode = 200,
+                Message = "Successfully generated Token.",
+                Response = new LoginResponseDto()
                 {
-                    IsSuccess = true,
-                    StatusCode = 200,
-                    Message = "Successfully generated an Access Token.",
-                    Response = new JwtTokenResponseDto()
+                    AccessToken = new JwtTokenTypeResponseDto
                     {
                         TokenContext = new JwtSecurityTokenHandler().WriteToken(accessJwtToken),
-                        ExpiryTokenDate = accessJwtToken.ValidTo,
+                        ExpiryTokenDate = accessJwtToken.ValidTo
+                    },
+                    RefreshToken = new JwtTokenTypeResponseDto
+                    {
+                        TokenContext = user.RefreshToken,
+                        ExpiryTokenDate = user.RefreshTokenExpiry
                     }
-                };
-            }
-
-            return new APIResponseDto<JwtTokenResponseDto>
-            {
-                IsSuccess = false,
-                StatusCode = 404,
-                Message = "Failed to generated an Access Token.",
+                }
             };
         }
 
@@ -193,7 +201,32 @@ namespace User.Mgmt.Service.Services
             }
         }
 
-        public async Task<APIResponseDto<LoginOTPResponseDto>> GetOTPByLoginAsync(LoginRequestDto loginRequestDto)
+        private JwtSecurityToken GenerateToken(List<Claim> authClaims)
+        {
+            var secretKey = Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]);
+
+            var authSigningKey = new SymmetricSecurityKey(secretKey);
+
+            _ = int.TryParse(_configuration["JWT:TokenValidationInMinutes"], out int tokenValidationInMinutes);
+
+            var expirationTimeUtc = DateTime.UtcNow.AddMinutes(tokenValidationInMinutes);
+
+            var localTimeZone = TimeZoneInfo.Local;
+
+            var expirationTimeInLocalTimeZone = TimeZoneInfo.ConvertTimeFromUtc(expirationTimeUtc, localTimeZone);
+
+            var token = new JwtSecurityToken(
+                issuer: _configuration["JWT:ValidIssuer"],
+                audience: _configuration["JWT:ValidAudience"],
+                expires: expirationTimeInLocalTimeZone,
+                claims: authClaims,
+                signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
+            );
+
+            return token;
+        }
+
+        public async Task<APIResponseDto<LoginUser2FTokenResponseDto>> GetOTPByLoginAsync(LoginRequestDto loginRequestDto)
         {
             //checking user exists
             var user = await _userManager.FindByNameAsync(loginRequestDto.Username);
@@ -215,12 +248,12 @@ namespace User.Mgmt.Service.Services
                 {
                     var twoFToken = await _userManager.GenerateTwoFactorTokenAsync(user, "Email");
 
-                    return new APIResponseDto<LoginOTPResponseDto>
+                    return new APIResponseDto<LoginUser2FTokenResponseDto>
                     {
                         StatusCode = 200,
                         Message = $"OTP Two factor Authentication is not enabled.",
                         IsSuccess = true,
-                        Response = new LoginOTPResponseDto()
+                        Response = new LoginUser2FTokenResponseDto()
                         {
                             User = user,
                             TwoFToken = twoFToken,
@@ -230,12 +263,12 @@ namespace User.Mgmt.Service.Services
                 }
                 else
                 {
-                    return new APIResponseDto<LoginOTPResponseDto>
+                    return new APIResponseDto<LoginUser2FTokenResponseDto>
                     {
                         StatusCode = 200,
                         Message = $"OTP Two factor Authentication is not enabled.",
                         IsSuccess = true,
-                        Response = new LoginOTPResponseDto()
+                        Response = new LoginUser2FTokenResponseDto()
                         {
                             User = user,
                             TwoFToken = string.Empty,
@@ -246,7 +279,7 @@ namespace User.Mgmt.Service.Services
             }
             else
             {
-                return new APIResponseDto<LoginOTPResponseDto>
+                return new APIResponseDto<LoginUser2FTokenResponseDto>
                 {
                     StatusCode = 404,
                     Message = $"User not found.",
@@ -255,21 +288,55 @@ namespace User.Mgmt.Service.Services
             }
         }
 
-        private JwtSecurityToken GenerateToken(List<Claim> authClaims)
+        public string GenereateRefreshToken()
         {
-            var secretKey = Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]);
-            var authSigningKey = new SymmetricSecurityKey(secretKey);
-            _ = int.TryParse(_configuration["JWT:TokenValidationInMinutes"], out int tokenValidationInMinutes);
+            var randomNumber = new byte[64];
+            var range = RandomNumberGenerator.Create();
+            range.GetBytes(randomNumber);
 
-            var token = new JwtSecurityToken(
-                issuer: _configuration["JWT:ValidIssuer"],
-                audience: _configuration["JWT:ValidAudience"],
-                expires: DateTime.Now.AddMinutes(tokenValidationInMinutes),
-                claims: authClaims,
-                signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
+            return Convert.ToBase64String(randomNumber);
+        }
+
+        public async Task<APIResponseDto<LoginResponseDto>> LoginUserWith2FTokenAsnyc(string twoFToken, string userName)
+        {
+            var user = await _userManager.FindByNameAsync(userName);
+
+            if (user == null)
+            {
+                return new APIResponseDto<LoginResponseDto>
+                {
+                    IsSuccess = false,
+                    StatusCode = 404,
+                    Message = $"User with userName: {userName} does not exist.",
+                };
+            }
+
+            var signIn = await _signInManager.TwoFactorSignInAsync(
+                                                "Email",
+                                                twoFToken,
+                                                false,
+                                                false
             );
 
-            return token;
+            if (signIn.Succeeded)
+            {
+                if (user is not null)
+                {
+                    return await GetJwtTokenAsync(user);
+                }
+            }
+
+            return new APIResponseDto<LoginResponseDto>
+            {
+                IsSuccess = false,
+                StatusCode = 400,
+                Message = $"Invalid twoFToken.",
+                Response = new LoginResponseDto
+                {
+
+                }
+            };
         }
+
     }
 }
