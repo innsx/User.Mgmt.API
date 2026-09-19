@@ -15,12 +15,12 @@ namespace User.Mgmt.Service.Services
 {
     public class UserMgmtService : IUserMgmtService
     {
-        private readonly UserManager<ApplicationUserDto> _userManager;
+        private readonly UserManager<ApplicationUser> _userManager;
         private readonly RoleManager<IdentityRole> _roleManager;
-        private readonly SignInManager<ApplicationUserDto> _signInManager;
+        private readonly SignInManager<ApplicationUser> _signInManager;
         private readonly IConfiguration _configuration;
 
-        public UserMgmtService(UserManager<ApplicationUserDto> userManager, RoleManager<IdentityRole> roleManager, SignInManager<ApplicationUserDto> signInManager, IConfiguration configuration)
+        public UserMgmtService(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager, SignInManager<ApplicationUser> signInManager, IConfiguration configuration)
         {
             _userManager = userManager;
             _roleManager = roleManager;
@@ -28,7 +28,7 @@ namespace User.Mgmt.Service.Services
             _configuration = configuration;
         }
 
-        public async Task<APIResponseDto<List<string>>> AssignRoleToUserAsync(List<string> roles, ApplicationUserDto user)
+        public async Task<APIResponseDto<List<string>>> AssignRoleToUserAsync(List<string> roles, ApplicationUser user)
         {
             var assignedRoles = new List<string>();
 
@@ -62,6 +62,13 @@ namespace User.Mgmt.Service.Services
                             Message = "User already assigned to this Role."
                         };
                     }
+
+                    return new APIResponseDto<List<string>>
+                    {
+                        IsSuccess = false,
+                        StatusCode = 204,
+                        Message = "Role does not exist."
+                    };
                 }
             }
 
@@ -75,6 +82,13 @@ namespace User.Mgmt.Service.Services
 
                     assignedRoles.Add(defaultRole);
                 }
+
+                return new APIResponseDto<List<string>>
+                {
+                    IsSuccess = false,
+                    StatusCode = 204,
+                    Message = "User already assigned to this Role."
+                };
             }
 
             return new APIResponseDto<List<string>>
@@ -86,7 +100,7 @@ namespace User.Mgmt.Service.Services
             };
         }
 
-        public async Task<APIResponseDto<CreateUserReponseDto>> CreateUserWithTokenAsnyc(RegisterUserDto registerUserDto)
+        public async Task<APIResponseDto<CreateUserReponseDto>> CreateUserWithTokenAsnyc(RegisterUserRequestDto registerUserDto)
         {
             //check user exists in DB
             var userExists = await _userManager.FindByEmailAsync(registerUserDto.Email);
@@ -102,7 +116,7 @@ namespace User.Mgmt.Service.Services
             }
 
             // instantiate an ApplicationUserDto;
-            ApplicationUserDto user = new()
+            ApplicationUser user = new()
             {
                 Email = registerUserDto.Email,
                 SecurityStamp = Guid.NewGuid().ToString(),
@@ -128,52 +142,63 @@ namespace User.Mgmt.Service.Services
                     }
                 };
             }
-            else
+
+            return new APIResponseDto<CreateUserReponseDto>
             {
-                return new APIResponseDto<CreateUserReponseDto>
-                {
-                    IsSuccess = false,
-                    StatusCode = 500,
-                    Message = $"Failed to register User."
-                };
-            }
-        }
-
-        public async Task<APIResponseDto<LoginResponseDto>> GetJwtTokenAsync(ApplicationUserDto user)
-        {
-            List<Claim> authClaims = await CreateClaimsAsnyc(user);
-
-            var accessJwtToken = GenerateToken(authClaims);
-
-            _ = int.TryParse(_configuration["JWT:RefreshTokenValidity"], out int refreshTokenValidity);
-
-            user.RefreshToken = GenereateRefreshToken();
-            user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(refreshTokenValidity);
-
-            await _userManager.UpdateAsync(user);
-
-            return new APIResponseDto<LoginResponseDto>
-            {
-                IsSuccess = true,
-                StatusCode = 200,
-                Message = "Successfully generated Token.",
-                Response = new LoginResponseDto()
-                {
-                    AccessToken = new JwtTokenTypeResponseDto
-                    {
-                        TokenContext = new JwtSecurityTokenHandler().WriteToken(accessJwtToken),
-                        ExpiryTokenDate = accessJwtToken.ValidTo
-                    },
-                    RefreshToken = new JwtTokenTypeResponseDto
-                    {
-                        TokenContext = user.RefreshToken,
-                        ExpiryTokenDate = user.RefreshTokenExpiry
-                    }
-                }
+                IsSuccess = false,
+                StatusCode = 500,
+                Message = $"Failed to register User."
             };
         }
 
-        private async Task<List<Claim>> CreateClaimsAsnyc(ApplicationUserDto user)
+        public async Task<APIResponseDto<LoginTokensResponseDto>> GenerateAccessJwtTokenAsync(ApplicationUser user)
+        {
+            List<Claim> authClaims = await CreateClaimsAsnyc(user);
+
+            if (authClaims.Any())
+            {
+                var generatedAccessToken = GenerateAccessToken(authClaims);
+
+                if (generatedAccessToken is not null)
+                {
+                    _ = int.TryParse(_configuration["JWT:RefreshTokenValidity"], out int refreshTokenValidity);
+
+                    user.RefreshToken = GenereateRefreshToken();
+                    user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(refreshTokenValidity);
+
+                    await _userManager.UpdateAsync(user);
+
+                    return new APIResponseDto<LoginTokensResponseDto>
+                    {
+                        IsSuccess = true,
+                        StatusCode = 200,
+                        Message = "Successfully generated Token.",
+                        Response = new LoginTokensResponseDto()
+                        {
+                            AccessToken = new JwtTokenTypeResponseDto
+                            {
+                                TokenContext = new JwtSecurityTokenHandler().WriteToken(generatedAccessToken),
+                                ExpiryTokenDate = generatedAccessToken.ValidTo
+                            },
+                            RefreshToken = new JwtTokenTypeResponseDto
+                            {
+                                TokenContext = user.RefreshToken,
+                                ExpiryTokenDate = user.RefreshTokenExpiry
+                            }
+                        }
+                    };
+                }
+            }
+
+            return new APIResponseDto<LoginTokensResponseDto>
+            {
+                IsSuccess = false,
+                StatusCode = 2004,
+                Message = "Failed to generate Access Jwt Token.",
+            };
+        }
+
+        private async Task<List<Claim>> CreateClaimsAsnyc(ApplicationUser user)
         {
             var authClaims = new List<Claim>()
             {
@@ -198,7 +223,7 @@ namespace User.Mgmt.Service.Services
             }
         }
 
-        private JwtSecurityToken GenerateToken(List<Claim> authClaims)
+        private JwtSecurityToken GenerateAccessToken(List<Claim> authClaims)
         {
             var secretKey = Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]);
 
@@ -223,7 +248,7 @@ namespace User.Mgmt.Service.Services
             return token;
         }
 
-        public async Task<APIResponseDto<LoginUser2FTokenResponseDto>> GetOTPByLoginAsync(LoginRequestDto loginRequestDto)
+        public async Task<APIResponseDto<LoginUser2FTokenResponseDto>> Generate2FTokenAsync(LoginRequestDto loginRequestDto)
         {
             //checking user exists
             var user = await _userManager.FindByNameAsync(loginRequestDto.Username);
@@ -243,7 +268,7 @@ namespace User.Mgmt.Service.Services
 
                 if (user.TwoFactorEnabled is true)
                 {
-                    var twoFToken = await _userManager.GenerateTwoFactorTokenAsync(user, "Email");
+                    var generatedTwoFToken = await _userManager.GenerateTwoFactorTokenAsync(user, "Email");
 
                     return new APIResponseDto<LoginUser2FTokenResponseDto>
                     {
@@ -253,8 +278,8 @@ namespace User.Mgmt.Service.Services
                         Response = new LoginUser2FTokenResponseDto()
                         {
                             User = user,
-                            TwoFToken = twoFToken,
-                            IsTwoFactorEnable = user.TwoFactorEnabled
+                            TwoFToken = generatedTwoFToken,
+                            IsTwoFactorEnabled = user.TwoFactorEnabled
                         }
                     };
                 }
@@ -263,26 +288,24 @@ namespace User.Mgmt.Service.Services
                     return new APIResponseDto<LoginUser2FTokenResponseDto>
                     {
                         StatusCode = 200,
-                        Message = $"OTP Two factor Authentication is not enabled.",
+                        Message = $"Email account OTP two factor authentication is not enabled.",
                         IsSuccess = true,
                         Response = new LoginUser2FTokenResponseDto()
                         {
                             User = user,
                             TwoFToken = string.Empty,
-                            IsTwoFactorEnable = user.TwoFactorEnabled
+                            IsTwoFactorEnabled = user.TwoFactorEnabled
                         }
                     };
                 }
             }
-            else
+
+            return new APIResponseDto<LoginUser2FTokenResponseDto>
             {
-                return new APIResponseDto<LoginUser2FTokenResponseDto>
-                {
-                    StatusCode = 404,
-                    Message = $"User not found.",
-                    IsSuccess = false
-                };
-            }
+                StatusCode = 404,
+                Message = $"User not found.",
+                IsSuccess = false
+            };
         }
 
         private string GenereateRefreshToken()
@@ -294,13 +317,13 @@ namespace User.Mgmt.Service.Services
             return Convert.ToBase64String(randomNumber);
         }
 
-        public async Task<APIResponseDto<LoginResponseDto>> LoginUserWith2FTokenAsnyc(string twoFToken, string userName)
+        public async Task<APIResponseDto<LoginTokensResponseDto>> LoginUserWith2FTokenAsnyc(string twoFToken, string userName)
         {
             var user = await _userManager.FindByNameAsync(userName);
 
-            if (user == null)
+            if (user is null)
             {
-                return new APIResponseDto<LoginResponseDto>
+                return new APIResponseDto<LoginTokensResponseDto>
                 {
                     IsSuccess = false,
                     StatusCode = 404,
@@ -315,27 +338,24 @@ namespace User.Mgmt.Service.Services
                                                 false
             );
 
-            if (signIn.Succeeded)
+            if (signIn.Succeeded is true)
             {
-                if (user is not null)
-                {
-                    return await GetJwtTokenAsync(user);
-                }
+                return await GenerateAccessJwtTokenAsync(user);
             }
 
-            return new APIResponseDto<LoginResponseDto>
+            return new APIResponseDto<LoginTokensResponseDto>
             {
                 IsSuccess = false,
                 StatusCode = 400,
                 Message = $"Invalid twoFToken.",
-                Response = new LoginResponseDto
+                Response = new LoginTokensResponseDto
                 {
 
                 }
             };
         }
 
-        public async Task<APIResponseDto<LoginResponseDto>> RenewAccessTokenAsync(LoginResponseDto tokens)
+        public async Task<APIResponseDto<LoginTokensResponseDto>> RenewAccessJwtTokenAsync(LoginTokensResponseDto tokens)
         {
             var accessToken = tokens.AccessToken;
 
@@ -343,22 +363,43 @@ namespace User.Mgmt.Service.Services
 
             var principal = GetClaimsPrincipal(accessToken.TokenContext!);
 
+            if (principal is null)
+            {
+                return new APIResponseDto<LoginTokensResponseDto>
+                {
+                    IsSuccess = false,
+                    StatusCode = 204,
+                    Message = $"Claim Principal is invalid.",
+
+                };
+            }
+
             var user = await _userManager.FindByNameAsync(principal.Identity!.Name);
 
             if (refreshToken!.TokenContext != user.RefreshToken && refreshToken.ExpiryTokenDate <= DateTime.Now)
             {
-                return new APIResponseDto<LoginResponseDto>
+                return new APIResponseDto<LoginTokensResponseDto>
                 {
                     IsSuccess = false,
                     StatusCode = 400,
                     Message = $"Invalid refresh Token or expired. User must re-login.",
-                    
+
                 };
             }
-            
-            var response = await GetJwtTokenAsync(user);
 
-            return response;
+            var response = await GenerateAccessJwtTokenAsync(user);
+
+            if (response.IsSuccess)
+            {
+                return response;
+            }
+
+            return new APIResponseDto<LoginTokensResponseDto>
+            {
+                IsSuccess = false,
+                StatusCode = 204,
+                Message = $"Failed to renew access jwt Token.",
+            };
         }
 
         private ClaimsPrincipal GetClaimsPrincipal(string accessToken)
@@ -369,14 +410,14 @@ namespace User.Mgmt.Service.Services
                 ValidateIssuer = false,
                 ValidateIssuerSigningKey = true,
                 IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"])),
-                ValidateLifetime = false                
+                ValidateLifetime = false
             };
 
             var tokenHandler = new JwtSecurityTokenHandler();
 
             var principal = tokenHandler.ValidateToken(
-                                            accessToken, 
-                                            tokenValidationParameter, 
+                                            accessToken,
+                                            tokenValidationParameter,
                                             out SecurityToken securityToken
             );
 

@@ -2,7 +2,7 @@
 
 namespace User.Mgmt.Service.Models.Authentication.SignUp
 {
-    public class RegisterUserDto
+    public class RegisterUserRequestDto
     {
         [Required(ErrorMessage = "Username is Required.")]
         public string Username { get; set; } = string.Empty;

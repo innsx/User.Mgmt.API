@@ -17,7 +17,7 @@ namespace User.Mgmt.Service.Services
         {
             var emailMessage = CreateEmailMessage(message);
 
-            if (emailMessage != null)
+            if (emailMessage is not null)
             {
                 var isSendSuccessful = Send(emailMessage);
 

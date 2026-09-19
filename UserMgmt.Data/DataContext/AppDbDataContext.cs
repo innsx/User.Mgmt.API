@@ -5,7 +5,7 @@ using UserMgmt.Data.Models;
 
 namespace User.Mgmt.Data.DataContext
 {
-    public class AppDbDataContext : IdentityDbContext<ApplicationUserDto>
+    public class AppDbDataContext : IdentityDbContext<ApplicationUser>
     {
         public AppDbDataContext(DbContextOptions<AppDbDataContext> options) : base(options)
         {

@@ -25,7 +25,7 @@ builder.Services.AddDbContext<AppDbDataContext>(options =>
 
 // Registers the core Identity services for the specified user and role classes,
 //      enabling user management, sign-in, and role features
-builder.Services.AddIdentity<ApplicationUserDto, IdentityRole>()
+builder.Services.AddIdentity<ApplicationUser, IdentityRole>()
 
                 //Tells Identity to use your Entity Framework Core database context (AppDbDataContext)
                 //  to save user and role data to the database.
