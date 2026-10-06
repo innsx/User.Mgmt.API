@@ -9,7 +9,7 @@ using System.Text;
 using User.Mgmt.Data.DataContext;
 using User.Mgmt.Service.Models;
 using User.Mgmt.Service.Services;
-using UserMgmt.Data.Models;
+using User.Mgmt.Data.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 

@@ -3,12 +3,13 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using System.ComponentModel.DataAnnotations;
 using User.Mgmt.API.Models;
+using User.Mgmt.Service.Exentions;
 using User.Mgmt.Service.Models;
 using User.Mgmt.Service.Models.Authentication.Login;
 using User.Mgmt.Service.Models.Authentication.SignUp;
 using User.Mgmt.Service.Models.Authentication.UserResponse;
 using User.Mgmt.Service.Services;
-using UserMgmt.Data.Models;
+using User.Mgmt.Data.Models;
 
 namespace User.Mgmt.API.Controllers
 {
@@ -29,46 +30,57 @@ namespace User.Mgmt.API.Controllers
             _userMgmtService = userMgmtService;
         }
 
-        [HttpPost("register-user")]
+        [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterUserRequestDto registerUserDto)
         {
-            var accessToken = await _userMgmtService.CreateUserWithTokenAsnyc(registerUserDto);
+            var createdUserResponse = await _userMgmtService.CreatesRegisterUserAsnyc(registerUserDto);
 
-            if (accessToken.IsSuccess is true)
+            if (createdUserResponse.IsSuccess is true)
             {
-                var isRoleAssigned = await _userMgmtService.AssignRoleToUserAsync(registerUserDto.Roles!, accessToken.Response!.User!);
+                var assignRoleToUser = 
+                    await _userMgmtService.AssignsRoleToUserAsync(registerUserDto.Roles!, createdUserResponse.Response!.User!);
 
-                if (isRoleAssigned.IsSuccess is true)
+                if (assignRoleToUser.IsSuccess is true)
                 {
-                    var actionMethod = nameof(ConfirmEmail);
+                    var callBackActionMethod = nameof(EmailRegisteredUserConfirm);
+
                     var controller = "Authentication";
-                    object objectContent = new { accessToken.Response.Token, registerUserDto.Email };
 
-                    var confirmationLink = Url.Action(
-                                            actionMethod, //CALLBACK Endpoint in AuthenticationController.cs
-                                            controller,    //"AuthenticationController" 
-                                            objectContent, 
-                                            Request.Scheme); //MUST specified or else it will not create a URL link
+                    object messageContent = new
+                    {
+                        createdUserResponse.Response.Token,
+                        registerUserDto.Email
+                    };
 
-                    var message = new Message(new string[] 
-                                        { registerUserDto.Email! },
-                                        "Confirmation email link",
-                                        confirmationLink!);
+                    var registrationEmailConfirmationLink = Url.Action(
+                                       callBackActionMethod, //CALLBACK Endpoint in AuthenticationController.cs
+                                       controller,    //"AuthenticationController" 
+                                       messageContent,
+                                       Request.Scheme); //MUST specified or else it will not create a URL link
 
-                    var isSendEmailSuccessfull = _emailService.SendEmails(message);
+                    var message = new Message(
+                                        new string[]
+                                        {
+                                            registerUserDto.Email!
+                                        },
+                                        "Registration confirmation email link.",
+                                        registrationEmailConfirmationLink!);
 
-                    if (isSendEmailSuccessfull is true)
+                    var isSendEmailSuccessful = _emailService.SendEmails(message);
+
+                    if (isSendEmailSuccessful is true)
                     {
                         return StatusCode(
                             StatusCodes.Status200OK,
                             new ResponseDto
                             {
                                 Status = "Success",
-                                Message = $"Email sent to {registerUserDto.Email}. Open Link to verify.",
+                                Message = $"Email sent to {registerUserDto.Email}. Open Link to verify your email account.",
                                 IsSuccess = true
                             });
                     }
-                }         
+
+                }
             }
 
             return StatusCode(
@@ -76,102 +88,77 @@ namespace User.Mgmt.API.Controllers
                     new ResponseDto
                     {
                         Status = "Error",
-                        Message = accessToken.Message,
-                        IsSuccess = accessToken.IsSuccess
+                        Message = createdUserResponse.Message,
+                        IsSuccess = createdUserResponse.IsSuccess
                     });
-
         }
 
         [HttpGet("confirm-email")]
-        public async Task<IActionResult> ConfirmEmail(string token, string email)
+        public async Task<IActionResult> EmailRegisteredUserConfirm(string token, string email)
         {
-            var user = await _userManager.FindByEmailAsync(email);
+            var validatesRegistrationTokenResponse = 
+                await _userMgmtService.ValidatesRegistrationTokenAsync(token, email);
 
-            if (user is not null)
+            if (validatesRegistrationTokenResponse.IsSuccess is true)
             {
-                //this line confirm User’s Email and UPDATE AspNetUser table EmailConfirmed column to a ‘1’ for TRUE
-                //and the User is assigned  with the Registered Role in AspNetUserRoles table
-                var confirmEmail = await _userManager.ConfirmEmailAsync(user, token);
+                return StatusCode(
+                    StatusCodes.Status200OK,
+                    new ResponseDto
+                    {
+                        Status = "Success",
+                        Message = validatesRegistrationTokenResponse.Message,
+                        IsSuccess = validatesRegistrationTokenResponse.IsSuccess
+                    });
+            }
 
-                if (confirmEmail.Succeeded is true)
+            return StatusCode(
+                 StatusCodes.Status500InternalServerError,
+                 new ResponseDto
+                 {
+                     Status = "Error",
+                     Message = validatesRegistrationTokenResponse.Message,
+                     IsSuccess = validatesRegistrationTokenResponse.IsSuccess
+                 });
+
+        }
+
+        [HttpPost("login")]
+        public async Task<IActionResult> Login([FromBody] LoginRequestDto loginRequestDto)
+        {
+            var twoFTokenResponse = await _userMgmtService.Generates2FTokenAsync(loginRequestDto);
+
+            if (twoFTokenResponse.Response is not null)
+            {
+                var appUser = twoFTokenResponse.Response.User;
+                var twoFToken = twoFTokenResponse.Response.TwoFToken;
+
+                var message = new Message(
+                                new string[] { appUser.Email! },
+                                "OTP 2 factor token email confirmation link.",
+                                twoFToken);
+
+                var isSendEmailSucceed = _emailService.SendEmails(message);
+
+                if (isSendEmailSucceed is true)
                 {
                     return StatusCode(
                         StatusCodes.Status200OK,
                         new ResponseDto
                         {
                             Status = "Success",
-                            Message = $"Email: {email} verified successfully.",
-                            IsSuccess = true
+                            Message = $"An Email has been sent to: {appUser.Email} to perform an OTP (2 factor Authentication).",
+                            IsSuccess = twoFTokenResponse.IsSuccess
                         });
                 }
-            }
 
-            return StatusCode(
-                    StatusCodes.Status500InternalServerError,
+                return StatusCode(
+                    StatusCodes.Status400BadRequest,
                     new ResponseDto
                     {
                         Status = "Error",
-                        Message = $"User's Email: {email} does not exist.",
+                        Message = $"Email was not sent to: {appUser.Email} to perform an OTP (2 factor Authentication).",
                         IsSuccess = false
                     });
-        }
-
-        [HttpPost("login-user")]
-        public async Task<IActionResult> Login([FromBody] LoginRequestDto loginRequestDto)
-        {
-            var otp2FTokenResponse = await _userMgmtService.Generate2FTokenAsync(loginRequestDto);
-
-            if (otp2FTokenResponse.Response is not null)
-            {
-                var user = otp2FTokenResponse.Response.User;
-
-                if (user.TwoFactorEnabled is true)
-                {
-                    var twoFToken = otp2FTokenResponse.Response.TwoFToken;
-
-                    var message = new Message(
-                        new string[] { user.Email! },
-                        "OTP Email Confirmation",
-                        twoFToken);
-
-                    var isSendEmailSucced = _emailService.SendEmails(message);
-
-                    if (isSendEmailSucced is true)
-                    {
-                        return StatusCode(
-                            StatusCodes.Status200OK,
-                            new ResponseDto
-                            {
-                                Status = "Success",
-                                Message = $"An Email has been sent to: {user.Email} to perform an OTP (2 factor Authentication).",
-                                IsSuccess = otp2FTokenResponse.IsSuccess
-                            });
-                    }
-
-                    return StatusCode(
-                        StatusCodes.Status400BadRequest,
-                        new ResponseDto
-                        {
-                            Status = "Error",
-                            Message = $"Email was not sent to: {user.Email} to perform an OTP (2 factor Authentication).",
-                            IsSuccess = false
-                        });
-                }
-                else if (user.TwoFactorEnabled is false)
-                {
-                    //enable TwoFactorEnabled to true
-
-                    //
-                    //checking user's password
-                    var isPasswordExist = await _userManager.CheckPasswordAsync(user, loginRequestDto.Password);
-
-                    if (user is not null && isPasswordExist is true)
-                    {
-                        var accessJwtToken = await _userMgmtService.GenerateAccessJwtTokenAsync(user);
-
-                        return Ok(accessJwtToken);
-                    }
-                }
             }
 
             //if user not exist, we're returning an Unauthorized result
@@ -179,13 +166,13 @@ namespace User.Mgmt.API.Controllers
         }
 
         [HttpPost("login-withTwoFToken")]
-        public async Task<IActionResult> LoginWith2FToken(string twoFToken, string username)
+        public async Task<IActionResult> LoginUserWith2FToken(string twoFToken, string username)
         { 
-            var loginUserResponse = await _userMgmtService.LoginUserWith2FTokenAsnyc(twoFToken, username);
+            var validateLoginUserResponse = await _userMgmtService.ValidatesLoginUser2FTokenAsnyc(twoFToken, username);
 
-            if (loginUserResponse.IsSuccess is true)
+            if (validateLoginUserResponse.IsSuccess is true)
             {
-                return Ok(loginUserResponse);
+                return Ok(validateLoginUserResponse);
             }
 
             return StatusCode(
@@ -193,8 +180,9 @@ namespace User.Mgmt.API.Controllers
                 new ResponseDto
                 {
                     Status = "Error",
-                    Message = $"An invalid OTP (2 factor Token).",
-                    IsSuccess = false
+                    //Message = $"Invalid OTP (2 factor Token).",
+                    Message = validateLoginUserResponse.Message,
+                    IsSuccess = validateLoginUserResponse.IsSuccess
                 });
         }
 
@@ -203,28 +191,28 @@ namespace User.Mgmt.API.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> ForgotPassword([Required] string email)
         {
-            var user = await _userManager.FindByEmailAsync(email);
+            var appUser = await _userManager.FindByEmailAsync(email);
 
-            if (user is not null)
+            if (appUser is not null)
             {
-                var resetPasswordToken = await _userManager.GeneratePasswordResetTokenAsync(user);
+                var passwordResetToken = await _userManager.GeneratePasswordResetTokenAsync(appUser);
 
-                string actionMethod = nameof(GetResetPasswordToken);
+                string callBackActionMethod = nameof(GetPasswordResetToken);
                 string controller = "Authentication";
-                object objectContent = new { resetPasswordToken, email = user.Email };
+                object messageContent = new { passwordResetToken, email = appUser.Email };
 
-                var forgotPasswordLink = Url.Action(
-                    actionMethod,
+                var forgotPasswordLinkContent = Url.Action(
+                    callBackActionMethod,
                     controller,
-                    objectContent,
+                    messageContent,
                     Request.Scheme
                 );
 
-                IEnumerable<string> emailTos = new string[] { user.Email };
+                IEnumerable<string> emailTos = new string[] { appUser.Email };
 
                 var subject = "Forgot Passsword Confirmation Link:";
 
-                var message = new Message(emailTos, subject, forgotPasswordLink!);
+                var message =  new Message(emailTos, subject, forgotPasswordLinkContent!);
 
                 var isEmailSent =_emailService.SendEmails(message);
 
@@ -233,11 +221,11 @@ namespace User.Mgmt.API.Controllers
                     return StatusCode(
                         StatusCodes.Status200OK,
                     new ResponseDto
-                    {
-                        Status = "Success",
-                        Message = $"Password reset request link is sent to: {email}.",
-                        IsSuccess = true
-                    });
+                            {
+                                Status = "Success",
+                                Message = $"Password reset request link is sent to: {email}.",
+                                IsSuccess = true
+                            });
                 }
 
                 return StatusCode(
@@ -261,33 +249,33 @@ namespace User.Mgmt.API.Controllers
         }
 
 
-        [HttpGet("get-reset-password-token")]
-        public async Task<IActionResult> GetResetPasswordToken(string resetPasswordToken, string email)
+        [HttpGet("get-password-reset-token")]
+        public IActionResult GetPasswordResetToken(string passwordResetToken, string email)
         {
-            var resetPasswordModel = new ResetPasswordRequestDto 
+            var passwordResetResponse = new PasswordResetResponseDto
             { 
-                ResetPasswodToken = resetPasswordToken, 
+                PasswordResetToken = passwordResetToken, 
                 Email = email 
             };
 
-            return Ok(new { resetPasswordModel });
+            return Ok(new { passwordResetResponse });
         }
 
 
         [HttpPost]
-        [Route("reset-password")]
+        [Route("password-reset")]
         [AllowAnonymous]
-        public async Task<IActionResult> ResetPassword(ResetPasswordRequestDto resetPasswordRequestDto)
+        public async Task<IActionResult> PasswordReset(PasswordResetRequestDto passwordResetRequestDto)
         {
-            var user = await _userManager.FindByEmailAsync(resetPasswordRequestDto.Email);
+            var user = await _userManager.FindByEmailAsync(passwordResetRequestDto.Email);
 
             if (user is not null)
             {
-                var resetPasswordResult = await _userManager.ResetPasswordAsync(user, resetPasswordRequestDto.ResetPasswodToken, resetPasswordRequestDto.Password);
+                var passwordResetResult = await _userManager.ResetPasswordAsync(user, passwordResetRequestDto.PasswordResetToken, passwordResetRequestDto.Password);
 
-                if (resetPasswordResult.Succeeded is false)
+                if (passwordResetResult.Succeeded is false)
                 {
-                    foreach (var error in resetPasswordResult.Errors)
+                    foreach (var error in passwordResetResult.Errors)
                     {
                         ModelState.AddModelError(error.Code, error.Description);
                     }
@@ -317,14 +305,38 @@ namespace User.Mgmt.API.Controllers
 
 
         [HttpPost]
-        [Route("refresh-token")]
-        public async Task<IActionResult> RefreshToken(LoginTokensResponseDto tokens)
+        [Route("refresh-tokens")]
+        public async Task<IActionResult> RefreshTokens(LoginTokensResponseDto tokens)
         {
-            var renewAccessJwtTokenResponse = await _userMgmtService.RenewAccessJwtTokenAsync(tokens);
+            var renewAccessNRefreshTokensResponse = await _userMgmtService.RenewAccessNRefreshTokensAsync(tokens);
 
-            if (renewAccessJwtTokenResponse.IsSuccess is true)
+            if (renewAccessNRefreshTokensResponse.IsSuccess is true && renewAccessNRefreshTokensResponse is not null)
             {
-                return Ok(renewAccessJwtTokenResponse);
+                return Ok(renewAccessNRefreshTokensResponse);
+            }
+
+            if (renewAccessNRefreshTokensResponse!.StatusCode == 401)
+            {
+                return StatusCode(
+                    StatusCodes.Status401Unauthorized,
+                    new ResponseDto
+                    {
+                        Status = "Error",
+                        Message = renewAccessNRefreshTokensResponse.Message,
+                        IsSuccess = false
+                    });
+            }
+
+            if (renewAccessNRefreshTokensResponse.StatusCode == 400)
+            {
+                return StatusCode(
+                    StatusCodes.Status400BadRequest,
+                    new ResponseDto
+                    {
+                        Status = "Error",
+                        Message = renewAccessNRefreshTokensResponse.Message,
+                        IsSuccess = false
+                    });
             }
 
             return StatusCode(
@@ -332,10 +344,108 @@ namespace User.Mgmt.API.Controllers
                 new ResponseDto
                 {
                     Status = "Error",
-                    Message = $"Token not found.",
+                    Message = renewAccessNRefreshTokensResponse.Message,
                     IsSuccess = false
                 });
         }
     }
-
 }
+
+
+
+
+
+
+//var isSendEmailSuccessful = 
+//    _userMgmtService.EmailConfirmationLink(EmailRegisteredUserConfirm, registerUserDto, createdUserResponse);
+
+
+//return StatusCode(
+//    StatusCodes.Status200OK,
+//    new ResponseDto
+//    {
+//        Status = "Success",
+//        Message = $"Email sent to {registerUserDto.Email}. Open Link to verify your email account.",
+//        IsSuccess = true
+//    });
+
+
+
+
+
+
+//if (validateLoginUserResponse.StatusCode == 400)
+//{
+//    return StatusCode(
+//        StatusCodes.Status400BadRequest,
+//        new ResponseDto
+//        {
+//            Status = "Error",
+//            //Message = $"Renew Access Token and Refresh Token Failed.",
+//            Message = validateLoginUserResponse.Message,
+//            IsSuccess = false
+//        });
+//}
+
+//if (validateLoginUserResponse.StatusCode == 404)
+//{
+//    return StatusCode(
+//        StatusCodes.Status404NotFound,
+//        new ResponseDto
+//        {
+//            Status = "Error",
+//            Message = $"Refresh Token not found.",
+//            IsSuccess = false
+//        });
+//}
+
+
+
+
+
+
+
+
+
+
+
+//var appUser = await _userManager.FindByEmailAsync(email);
+
+//if (appUser is not null)
+//{
+//    if (appUser.EmailConfirmed is false)
+//    {
+//        //confirm User’s Email and UPDATE AspNetUser table EmailConfirmed column to a ‘1’ for TRUE
+//        var updateConfirmEmailFlag = await _userManager.ConfirmEmailAsync(appUser, token);
+
+//        if (updateConfirmEmailFlag.Succeeded is true)
+//        {
+//            return StatusCode(
+//                StatusCodes.Status200OK,
+//                new ResponseDto
+//                {
+//                    Status = "Success",
+//                    Message = $"Email: {email} verified and confirmed successfully.",
+//                    IsSuccess = true
+//                });
+//        }
+//    }
+
+//    return StatusCode(
+//        StatusCodes.Status400BadRequest,
+//        new ResponseDto
+//        {
+//            Status = "Error",
+//            Message = $"User's Email already confirmed.",
+//            IsSuccess = false
+//        });
+//}
+
+//return StatusCode(
+//        StatusCodes.Status500InternalServerError,
+//        new ResponseDto
+//        {
+//            Status = "Error",
+//            Message = $"User's Email: {email} does not exist.",
+//            IsSuccess = false
+//        });

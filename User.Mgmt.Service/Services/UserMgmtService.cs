@@ -5,11 +5,11 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using User.Mgmt.Data.Models;
 using User.Mgmt.Service.Models;
 using User.Mgmt.Service.Models.Authentication.Login;
 using User.Mgmt.Service.Models.Authentication.SignUp;
 using User.Mgmt.Service.Models.Authentication.UserResponse;
-using UserMgmt.Data.Models;
 
 namespace User.Mgmt.Service.Services
 {
@@ -28,21 +28,21 @@ namespace User.Mgmt.Service.Services
             _configuration = configuration;
         }
 
-        public async Task<APIResponseDto<List<string>>> AssignRoleToUserAsync(List<string> roles, ApplicationUser user)
+        public async Task<APIResponseDto<List<string>>> AssignsRoleToUserAsync(List<string> roles, ApplicationUser appUser)
         {
             var assignedRoles = new List<string>();
 
-            var isNullEmpty = string.IsNullOrEmpty(roles.ToString());
+            var isRoleNullEmpty = string.IsNullOrEmpty(roles.ToString());
 
-            if (roles.Count > 0 && isNullEmpty is false)
+            if (roles.Count > 0 && isRoleNullEmpty is false)
             {
                 foreach (var role in roles)
                 {
                     if (await _roleManager.RoleExistsAsync(role) is true)
                     {
-                        if (await _userManager.IsInRoleAsync(user, role) is false)
+                        if (await _userManager.IsInRoleAsync(appUser, role) is false)
                         {
-                            await _userManager.AddToRoleAsync(user, role);
+                            await _userManager.AddToRoleAsync(appUser, role);
 
                             assignedRoles.Add(role);
 
@@ -76,9 +76,9 @@ namespace User.Mgmt.Service.Services
 
             if (await _roleManager.RoleExistsAsync(defaultRole) is true)
             {
-                if (await _userManager.IsInRoleAsync(user, defaultRole) is false)
+                if (await _userManager.IsInRoleAsync(appUser, defaultRole) is false)
                 {
-                    await _userManager.AddToRoleAsync(user, defaultRole);
+                    await _userManager.AddToRoleAsync(appUser, defaultRole);
 
                     assignedRoles.Add(defaultRole);
                 }
@@ -100,12 +100,12 @@ namespace User.Mgmt.Service.Services
             };
         }
 
-        public async Task<APIResponseDto<CreateUserReponseDto>> CreateUserWithTokenAsnyc(RegisterUserRequestDto registerUserDto)
+        public async Task<APIResponseDto<CreateUserReponseDto>> CreatesRegisterUserAsnyc(RegisterUserRequestDto registerUserDto)
         {
             //check user exists in DB
-            var userExists = await _userManager.FindByEmailAsync(registerUserDto.Email);
+            var registeredUser = await _userManager.FindByEmailAsync(registerUserDto.Email);
 
-            if (userExists is not null)
+            if (registeredUser is not null)
             {
                 return new APIResponseDto<CreateUserReponseDto>
                 {
@@ -115,30 +115,30 @@ namespace User.Mgmt.Service.Services
                 };
             }
 
-            // instantiate an ApplicationUserDto;
-            ApplicationUser user = new()
+            // instantiate a new ApplicationUser
+            ApplicationUser appUser = new()
             {
                 Email = registerUserDto.Email,
                 SecurityStamp = Guid.NewGuid().ToString(),
                 UserName = registerUserDto.Username,
-                TwoFactorEnabled = true
+                //TwoFactorEnabled = true //enabled TwoFactorEnabled flag to true in AspNetUsers 
             };
 
-            var createUser = await _userManager.CreateAsync(user, registerUserDto.Password);
+            var createAppUser = await _userManager.CreateAsync(appUser, registerUserDto.Password);
 
-            if (createUser.Succeeded)
+            if (createAppUser.Succeeded is true)
             {
-                var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+                var registrationToken = await _userManager.GenerateEmailConfirmationTokenAsync(appUser);
 
                 return new APIResponseDto<CreateUserReponseDto>
                 {
                     IsSuccess = true,
                     StatusCode = 201,
-                    Message = "User created.",
+                    Message = "New application User created.",
                     Response = new CreateUserReponseDto()
                     {
-                        Token = token,
-                        User = user
+                        Token = registrationToken,
+                        User = appUser
                     }
                 };
             }
@@ -151,28 +151,29 @@ namespace User.Mgmt.Service.Services
             };
         }
 
-        public async Task<APIResponseDto<LoginTokensResponseDto>> GenerateAccessJwtTokenAsync(ApplicationUser user)
+        public async Task<APIResponseDto<LoginTokensResponseDto>> GeneratesAccessNRefreshTokensAsync(ApplicationUser appUser)
         {
-            List<Claim> authClaims = await CreateClaimsAsnyc(user);
+            List<Claim> authClaims = await CreatesClaimsAsnyc(appUser);
 
-            if (authClaims.Any())
+            if (authClaims.Any() is true)
             {
-                var generatedAccessToken = GenerateAccessToken(authClaims);
+                var generatedAccessToken = GeneratesAccessToken(authClaims);
 
                 if (generatedAccessToken is not null)
                 {
                     _ = int.TryParse(_configuration["JWT:RefreshTokenValidity"], out int refreshTokenValidity);
 
-                    user.RefreshToken = GenereateRefreshToken();
-                    user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(refreshTokenValidity);
+                    appUser.RefreshToken = GeneratesRefreshToken();
 
-                    await _userManager.UpdateAsync(user);
+                    appUser.RefreshTokenExpiry = DateTime.UtcNow.AddDays(refreshTokenValidity);
+
+                    await _userManager.UpdateAsync(appUser);
 
                     return new APIResponseDto<LoginTokensResponseDto>
                     {
                         IsSuccess = true,
                         StatusCode = 200,
-                        Message = "Successfully generated Token.",
+                        Message = "Successfully generated Refresh Token.",
                         Response = new LoginTokensResponseDto()
                         {
                             AccessToken = new JwtTokenTypeResponseDto
@@ -182,8 +183,8 @@ namespace User.Mgmt.Service.Services
                             },
                             RefreshToken = new JwtTokenTypeResponseDto
                             {
-                                TokenContext = user.RefreshToken,
-                                ExpiryTokenDate = user.RefreshTokenExpiry
+                                TokenContext = appUser.RefreshToken,
+                                ExpiryTokenDate = appUser.RefreshTokenExpiry
                             }
                         }
                     };
@@ -198,19 +199,19 @@ namespace User.Mgmt.Service.Services
             };
         }
 
-        private async Task<List<Claim>> CreateClaimsAsnyc(ApplicationUser user)
+        private async Task<List<Claim>> CreatesClaimsAsnyc(ApplicationUser appUser)
         {
             var authClaims = new List<Claim>()
             {
-                new Claim(ClaimTypes.Name, user.UserName),
+                new Claim(ClaimTypes.Name, appUser.UserName),
                 new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
             };
 
-            var userRoles = await _userManager.GetRolesAsync(user);
+            var rolesFromDb = await _userManager.GetRolesAsync(appUser);
 
-            if (userRoles.Any())
+            if (rolesFromDb.Any() is true)
             {
-                foreach (var role in userRoles)
+                foreach (var role in rolesFromDb)
                 {
                     authClaims.Add(new Claim(ClaimTypes.Role, role));
                 }
@@ -223,7 +224,7 @@ namespace User.Mgmt.Service.Services
             }
         }
 
-        private JwtSecurityToken GenerateAccessToken(List<Claim> authClaims)
+        private JwtSecurityToken GeneratesAccessToken(List<Claim> authClaims)
         {
             var secretKey = Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]);
 
@@ -237,7 +238,7 @@ namespace User.Mgmt.Service.Services
 
             var expirationTimeInLocalTimeZone = TimeZoneInfo.ConvertTimeFromUtc(expirationTimeUtc, localTimeZone);
 
-            var token = new JwtSecurityToken(
+            var accessToken = new JwtSecurityToken(
                 issuer: _configuration["JWT:ValidIssuer"],
                 audience: _configuration["JWT:ValidAudience"],
                 expires: expirationTimeInLocalTimeZone,
@@ -245,59 +246,70 @@ namespace User.Mgmt.Service.Services
                 signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
             );
 
-            return token;
+            return accessToken;
         }
 
-        public async Task<APIResponseDto<LoginUser2FTokenResponseDto>> Generate2FTokenAsync(LoginRequestDto loginRequestDto)
+        public async Task<APIResponseDto<LoginUser2FTokenResponseDto>> Generates2FTokenAsync(LoginRequestDto loginRequestDto)
         {
             //checking user exists
-            var user = await _userManager.FindByNameAsync(loginRequestDto.Username);
+            var appUser = await _userManager.FindByNameAsync(loginRequestDto.Username);
 
-            if (user is not null)
+            if (appUser is not null)
             {
-                //first sign-out current user
-                await _signInManager.SignOutAsync();
-
-                //re-sign-in User with loginRequestDto.Password
-                await _signInManager.PasswordSignInAsync(
-                    user,
-                    loginRequestDto.Password,
-                    false,
-                    true
-                );
-
-                if (user.TwoFactorEnabled is true)
+                if (appUser.TwoFactorEnabled is false)
                 {
-                    var generatedTwoFToken = await _userManager.GenerateTwoFactorTokenAsync(user, "Email");
+                    appUser.TwoFactorEnabled = true;
 
-                    return new APIResponseDto<LoginUser2FTokenResponseDto>
+                    await _userManager.UpdateAsync(appUser);
+
+                    var twoFProviders = await _userManager.GetValidTwoFactorProvidersAsync(appUser);
+
+                    if (twoFProviders.Contains("Email"))
                     {
-                        StatusCode = 200,
-                        Message = $"OTP Two factor Authentication is not enabled.",
-                        IsSuccess = true,
-                        Response = new LoginUser2FTokenResponseDto()
+                        //first sign-out current user
+                        await _signInManager.SignOutAsync();
+
+                        //re-sign-in User with loginRequestDto.Password
+                        await _signInManager.PasswordSignInAsync(
+                                                appUser,
+                                                loginRequestDto.Password,
+                                                false,
+                                                true
+                        );
+
+                        var generatedTwoFToken = await _userManager.GenerateTwoFactorTokenAsync(appUser, "Email");
+
+                        if (generatedTwoFToken is not null)
                         {
-                            User = user,
-                            TwoFToken = generatedTwoFToken,
-                            IsTwoFactorEnabled = user.TwoFactorEnabled
+                            return new APIResponseDto<LoginUser2FTokenResponseDto>
+                            {
+                                StatusCode = 200,
+                                Message = $"OTP is created.",
+                                IsSuccess = true,
+                                Response = new LoginUser2FTokenResponseDto()
+                                {
+                                    User = appUser,
+                                    TwoFToken = generatedTwoFToken,
+                                    IsTwoFactorEnabled = appUser.TwoFactorEnabled
+                                }
+                            };
                         }
-                    };
+                    }
+                    
                 }
-                else
+
+                return new APIResponseDto<LoginUser2FTokenResponseDto>
                 {
-                    return new APIResponseDto<LoginUser2FTokenResponseDto>
+                    StatusCode = 400,
+                    Message = $"Failed to generate OTP two factor token and two factor token is not enabled.",
+                    IsSuccess = false,
+                    Response = new LoginUser2FTokenResponseDto()
                     {
-                        StatusCode = 200,
-                        Message = $"Email account OTP two factor authentication is not enabled.",
-                        IsSuccess = true,
-                        Response = new LoginUser2FTokenResponseDto()
-                        {
-                            User = user,
-                            TwoFToken = string.Empty,
-                            IsTwoFactorEnabled = user.TwoFactorEnabled
-                        }
-                    };
-                }
+                        User = appUser,
+                        TwoFToken = string.Empty,
+                        IsTwoFactorEnabled = appUser.TwoFactorEnabled
+                    }
+                };
             }
 
             return new APIResponseDto<LoginUser2FTokenResponseDto>
@@ -308,7 +320,7 @@ namespace User.Mgmt.Service.Services
             };
         }
 
-        private string GenereateRefreshToken()
+        private string GeneratesRefreshToken()
         {
             var randomNumber = new byte[64];
             var range = RandomNumberGenerator.Create();
@@ -317,11 +329,11 @@ namespace User.Mgmt.Service.Services
             return Convert.ToBase64String(randomNumber);
         }
 
-        public async Task<APIResponseDto<LoginTokensResponseDto>> LoginUserWith2FTokenAsnyc(string twoFToken, string userName)
+        public async Task<APIResponseDto<LoginTokensResponseDto>> ValidatesLoginUser2FTokenAsnyc(string twoFToken, string userName)
         {
-            var user = await _userManager.FindByNameAsync(userName);
+            var appUser = await _userManager.FindByNameAsync(userName);
 
-            if (user is null)
+            if (appUser is null)
             {
                 return new APIResponseDto<LoginTokensResponseDto>
                 {
@@ -330,17 +342,31 @@ namespace User.Mgmt.Service.Services
                     Message = $"User with userName: {userName} does not exist.",
                 };
             }
+            var providers = await _userManager.GetValidTwoFactorProvidersAsync(appUser);
 
-            var signIn = await _signInManager.TwoFactorSignInAsync(
-                                                "Email",
-                                                twoFToken,
-                                                false,
-                                                false
-            );
-
-            if (signIn.Succeeded is true)
+            if (providers.Contains("Email"))
             {
-                return await GenerateAccessJwtTokenAsync(user);
+                var signIn = await _signInManager.TwoFactorSignInAsync(
+                                    "Email",
+                                    twoFToken,
+                                    false,
+                                    false
+);
+
+                if (signIn.Succeeded is true)
+                {
+                    //appUser.TwoFactorEnabled = true;
+                    return await GeneratesAccessNRefreshTokensAsync(appUser);
+                }
+                else
+                {
+                    return new APIResponseDto<LoginTokensResponseDto>
+                    {
+                        IsSuccess = false,
+                        StatusCode = 404,
+                        Message = $"Failed to login with Two Factor Token.",
+                    };
+                }
             }
 
             return new APIResponseDto<LoginTokensResponseDto>
@@ -355,54 +381,61 @@ namespace User.Mgmt.Service.Services
             };
         }
 
-        public async Task<APIResponseDto<LoginTokensResponseDto>> RenewAccessJwtTokenAsync(LoginTokensResponseDto tokens)
+        public async Task<APIResponseDto<LoginTokensResponseDto>> RenewAccessNRefreshTokensAsync(LoginTokensResponseDto tokens)
         {
-            var accessToken = tokens.AccessToken;
+            var oldAccessToken = tokens.AccessToken;
 
-            var refreshToken = tokens.RefreshToken;
+            var oldRefreshToken = tokens.RefreshToken;
 
-            var principal = GetClaimsPrincipal(accessToken.TokenContext!);
+            var claimPrincipal = GetClaimsPrincipal(oldAccessToken.TokenContext!);
 
-            if (principal is null)
+            if (claimPrincipal is null)
             {
                 return new APIResponseDto<LoginTokensResponseDto>
                 {
                     IsSuccess = false,
-                    StatusCode = 204,
-                    Message = $"Claim Principal is invalid.",
-
+                    StatusCode = 403,
+                    Message = $"Failed to retrieve Claim Principal based of User's Refresh Token."
                 };
             }
 
-            var user = await _userManager.FindByNameAsync(principal.Identity!.Name);
+            ApplicationUser appUser = await _userManager.FindByNameAsync(claimPrincipal.Identity!.Name);
 
-            if (refreshToken!.TokenContext != user.RefreshToken && refreshToken.ExpiryTokenDate <= DateTime.Now)
+            if (oldRefreshToken!.TokenContext == appUser.RefreshToken)  //AppUser's RefreshToken matched                            
             {
+                if (oldRefreshToken.ExpiryTokenDate >= DateTime.Now) //Access Token has not expired
+                {
+                    return new APIResponseDto<LoginTokensResponseDto>
+                    {
+                        IsSuccess = false,
+                        StatusCode = 400,
+                        Message = $"Access Token has not expired. User must re-login.",
+                    };
+                }
+                var generatedAccessNRefreshTokensResponse = await GeneratesAccessNRefreshTokensAsync(appUser);
+
+                if (generatedAccessNRefreshTokensResponse.IsSuccess is true)
+                {
+                    return generatedAccessNRefreshTokensResponse;
+                }
+
                 return new APIResponseDto<LoginTokensResponseDto>
                 {
                     IsSuccess = false,
-                    StatusCode = 400,
-                    Message = $"Invalid refresh Token or expired. User must re-login.",
-
+                    StatusCode = 401,
+                    Message = $"Renew Access Token and Refresh Token Failed.",
                 };
-            }
-
-            var response = await GenerateAccessJwtTokenAsync(user);
-
-            if (response.IsSuccess)
-            {
-                return response;
             }
 
             return new APIResponseDto<LoginTokensResponseDto>
             {
                 IsSuccess = false,
-                StatusCode = 204,
-                Message = $"Failed to renew access jwt Token.",
+                StatusCode = 404,
+                Message = $"Old Refresh Token does not matched to System's Refresh Token.",
             };
         }
 
-        private ClaimsPrincipal GetClaimsPrincipal(string accessToken)
+        private ClaimsPrincipal? GetClaimsPrincipal(string oldAccessToken)
         {
             var tokenValidationParameter = new TokenValidationParameters
             {
@@ -415,13 +448,173 @@ namespace User.Mgmt.Service.Services
 
             var tokenHandler = new JwtSecurityTokenHandler();
 
-            var principal = tokenHandler.ValidateToken(
-                                            accessToken,
-                                            tokenValidationParameter,
-                                            out SecurityToken securityToken
-            );
+            var claimsPrincipal = new ClaimsPrincipal();
 
-            return principal;
+            try
+            {
+                claimsPrincipal = tokenHandler.ValidateToken(
+                                        oldAccessToken,
+                                        tokenValidationParameter,
+                                        out SecurityToken securityToken);
+            }
+            catch (Exception ex)
+            {
+                throw new NullReferenceException(ex.Message.ToString());
+            }
+
+            return claimsPrincipal;
+        }
+
+        public async Task<IdentityResult> ResetPasswordAsync(PasswordResetRequestDto passwordResetRequestDto)
+        {
+            var user = await _userManager.FindByEmailAsync(passwordResetRequestDto.Email);
+
+            if (user is not null)
+            {
+                var resetPasswordResult = await _userManager.ResetPasswordAsync(user, passwordResetRequestDto.PasswordResetToken, passwordResetRequestDto.Password);
+
+                if (resetPasswordResult.Succeeded is false)
+                {
+                    return resetPasswordResult;
+                }
+            }
+
+            return IdentityResult.Success;
+        }
+
+        public async Task<APIResponseDto<LoginTokensResponseDto>> ValidatesRegistrationTokenAsync(string token, string email)
+        {
+            var appUser = await _userManager.FindByEmailAsync(email);
+
+            if (appUser is not null)
+            {
+                if (appUser.EmailConfirmed is false)
+                {
+                    //confirm User’s Email and UPDATE AspNetUser table EmailConfirmed column to a ‘1’ for TRUE
+                    var updateConfirmEmailFlag = await _userManager.ConfirmEmailAsync(appUser, token);
+
+                    if (updateConfirmEmailFlag.Succeeded is true)
+                    {
+                        return
+                            new APIResponseDto<LoginTokensResponseDto>
+                            {
+                                StatusCode = 200,
+                                Message = $"Email: {email} verified and confirmed successfully.",
+                                IsSuccess = true
+                            };
+                    }
+                }
+
+                return new APIResponseDto<LoginTokensResponseDto>
+                {
+                        StatusCode = 201,
+                        Message = $"User's Email already confirmed.",
+                        IsSuccess = false
+                };
+            }
+
+            return new APIResponseDto<LoginTokensResponseDto>
+            {
+                StatusCode = 404,
+                Message = $"User's does not exist.",
+                IsSuccess = false
+            };
         }
     }
 }
+
+
+
+
+//public APIResponseDto<LoginTokensResponseDto> EmailConfirmationLink(Func<string, string, Task<IActionResult>> EmailRegisteredUserConfirm, RegisterUserRequestDto registerUserDto, APIResponseDto<CreateUserReponseDto> createdUserResponse)
+//{
+//    var callBackActionMethod = nameof(EmailRegisteredUserConfirm);
+
+//    var controller = "Authentication";
+
+//    object messageContent = new
+//    {
+//        createdUserResponse.Response!.Token,
+//        registerUserDto.Email
+//    };
+
+//    var controllerBaseInstance = new AuthenticationController();
+
+//    var registrationEmailConfirmationLink = controllerBaseInstance.Url.Action(
+//                       callBackActionMethod, //CALLBACK Endpoint in AuthenticationController.cs
+//                       controller,    //"AuthenticationController" 
+//                       messageContent,
+//                       controllerBaseInstance.Request.Scheme); //MUST specified or else it will not create a URL link
+
+//    var message = new Message(
+//                        new string[]
+//                        {
+//                            registerUserDto.Email!
+//                        },
+//                        "Registration confirmation email link.",
+//                        registrationEmailConfirmationLink!);
+
+//    var isSendEmailSuccessful = _emailService.SendEmails(message);
+
+//    if (isSendEmailSuccessful is true)
+//    {
+//        return new APIResponseDto<LoginTokensResponseDto>
+//        {
+//            StatusCode = 200,
+//            Message = $"Email sent to {registerUserDto.Email}. Open Link to verify your email account.",
+//            IsSuccess = true
+//        };
+//    }
+
+//    return new APIResponseDto<LoginTokensResponseDto>
+//    {
+//        StatusCode = 404,
+//        Message = $"Failed to send email to {registerUserDto.Email}.",
+//        IsSuccess = false
+//    };
+//}
+
+
+
+
+
+
+//public Task<ResetPasswordRequestDto> GetResetPasswordTokenAsync(string resetPasswordToken, string email)
+//{
+//    var result = new ResetPasswordRequestDto
+//    {
+//        ResetPasswodToken = resetPasswordToken,
+//        Email = email
+//    };
+
+//    return result;
+//}
+
+
+//public Message CreateConfirmationEmailLink(APIResponseDto<CreateUserReponseDto> createdUser, RegisterUserRequestDto registerUserRequestDto, ControllerBase baseUrl)
+//{
+//    string ConfirmEmail = string.Empty;
+//    var callBackActionMethod = nameof(ConfirmEmail);
+//    var controller = "Authentication";
+//    object emailContent = new
+//    {
+//        createdUser.Response!.Token,
+//        registerUserRequestDto.Email
+//    };
+
+//    var confirmationLink = baseUrl.Url.Action(
+//                            callBackActionMethod, //CALLBACK Endpoint in AuthenticationController.cs
+//                            controller,    //"AuthenticationController" 
+//                            emailContent,
+//                            baseUrl.Request.Scheme); //MUST specified or else it will not create a URL link
+
+//    var message = new Message(
+//                        new string[]
+//                        {
+//                            registerUserRequestDto.Email!
+//                        },
+//                        "Registration Confirmation email link.",
+//                        confirmationLink!);
+
+//    return message;
+//}

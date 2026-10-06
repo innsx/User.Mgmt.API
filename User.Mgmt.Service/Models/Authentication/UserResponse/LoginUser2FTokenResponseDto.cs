@@ -1,5 +1,5 @@
 ﻿using Microsoft.AspNetCore.Identity;
-using UserMgmt.Data.Models;
+using User.Mgmt.Data.Models;
 
 namespace User.Mgmt.Service.Models.Authentication.UserResponse
 {

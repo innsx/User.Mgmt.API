@@ -28,7 +28,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\UserMgmt.Data\UserMgmt.Data.csproj" />
+    <ProjectReference Include="..\UserMgmt.Data\User.Mgmt.Data.csproj" />
   </ItemGroup>
 
 </Project>
