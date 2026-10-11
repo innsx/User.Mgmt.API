@@ -19,6 +19,6 @@ namespace User.Mgmt.Service.Services
         Task<APIResponseDto<LoginTokensResponseDto>> ValidatesLoginUser2FTokenAsnyc(string twoFToken, string userName);
         Task<APIResponseDto<LoginTokensResponseDto>> RenewAccessNRefreshTokensAsync(LoginTokensResponseDto token);
         //APIResponseDto<LoginTokensResponseDto> EmailConfirmationLink(Func<string, string, Task<IActionResult>> emailRegisteredUserConfirm, RegisterUserRequestDto registerUserDto, APIResponseDto<CreateUserReponseDto> createdUserResponse);
-        //Task<IdentityResult> GetResetPasswordTokenAsync(ResetPasswordRequestDto resetPasswordRequestDto, string email);
+        Task<ResponseDto> GetPasswordResetTokenAsync(PasswordResetRequestDto passwordResetRequestDto);
     }
 }

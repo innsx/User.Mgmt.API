@@ -206,6 +206,16 @@ builder.Services.AddSwaggerGen(options =>
 
 builder.Services.AddSingleton<MemoryCache>();
 
+builder.Services.AddCors( options => 
+{
+    options.AddPolicy("AllowAll", builder =>
+    {
+        builder.AllowAnyOrigin()
+               .AllowAnyMethod()
+               .AllowAnyHeader();
+    });
+});
+
 //********** Middleware pipeline Configurations *******************************
 var app = builder.Build();
 
