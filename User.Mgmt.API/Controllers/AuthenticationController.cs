@@ -44,7 +44,7 @@ namespace User.Mgmt.API.Controllers
                 {
                     var callBackActionMethod = nameof(RegistrationEmailConfirmation);
 
-                    var controller = "Authentication";
+                    var controller = this.GetType().Name.Replace("Controller", string.Empty);
 
                     object messageContent = new
                     {
@@ -66,7 +66,7 @@ namespace User.Mgmt.API.Controllers
                                         "Registration confirmation email link.",
                                         registrationEmailConfirmationLink!);
 
-                    var isSendEmailSuccessful = _emailService.SendEmails(message);
+                    var isSendEmailSuccessful = _emailService.ComposeNSendEmails(message);
 
                     if (isSendEmailSuccessful is true)
                     {
@@ -75,10 +75,10 @@ namespace User.Mgmt.API.Controllers
                             new ResponseDto
                             {
                                 Status = "Success",
-                                Message = $"Email sent to {registerUserDto.Email}. Open Link to verify your email account.",
+                                Message = $"Email sent to {registerUserDto.Email}. Clicks Link to verify your email account.",
                                 IsSuccess = true
                             });
-                    }
+                    } 
 
                 }
             }
@@ -145,7 +145,7 @@ namespace User.Mgmt.API.Controllers
                                 "OTP 2 factor token email confirmation link.",
                                 twoFToken);   //NOTE: this parameteer MUST match the 'twoFToken' parameter name in the LoginWith2FToken action method
 
-                var isSendEmailSucceed = _emailService.SendEmails(message);
+                var isSendEmailSucceed = _emailService.ComposeNSendEmails(message);
 
                 if (isSendEmailSucceed is true)
                 {
@@ -174,10 +174,10 @@ namespace User.Mgmt.API.Controllers
         }
 
         [HttpPost("login-withTwoFToken")]
-        public async Task<IActionResult> LoginWith2FToken(string twoFToken, string username)
+        public async Task<IActionResult> LoginWith2FToken(string twoFToken, string userName)
         { 
             var validateLogin2FTokenResponse = 
-                await _userMgmtService.ValidatesLoginUser2FTokenAsnyc(twoFToken, username);
+                await _userMgmtService.ValidatesLoginUser2FTokenAsnyc(twoFToken, userName);
 
             if (validateLogin2FTokenResponse.IsSuccess is true)
             {
@@ -211,8 +211,8 @@ namespace User.Mgmt.API.Controllers
                 string controller = "Authentication";
 
                 object messageContent = new { 
-                    passwordResetToken, //NOTE: these parameters MUST match the 'passwordResetToken' 'email' parameters name in the GetPasswordResetToken action method
-                    email = appUser.Email 
+                    passwordResetToken, //NOTE: these parameters MUST match the 'passwordResetToken' &
+                    email = appUser.Email  //'email' parameters name in the GetPasswordResetToken action method
                 };
 
                 var forgotPasswordUrlContent = Url.Action(
@@ -228,7 +228,7 @@ namespace User.Mgmt.API.Controllers
 
                 var message =  new Message(emailTos, subject, forgotPasswordUrlContent!);
 
-                bool isSendEmailSucceed = _emailService.SendEmails(message);
+                bool isSendEmailSucceed = _emailService.ComposeNSendEmails(message);
 
                 if (isSendEmailSucceed is true)
                 {

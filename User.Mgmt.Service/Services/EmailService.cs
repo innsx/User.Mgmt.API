@@ -13,13 +13,13 @@ namespace User.Mgmt.Service.Services
             _emailConfig = emailConfig;
         }
 
-        public bool SendEmails(Message message)
+        public bool ComposeNSendEmails(Message message)
         {
-            var emailMessage = CreateEmailMessage(message);
+            var composeMimeMessage = ComposeEmail(message);
 
-            if (emailMessage is not null)
+            if (composeMimeMessage is not null)
             {
-                var isSendSuccessful = Send(emailMessage);
+                var isSendSuccessful = Send(composeMimeMessage);
 
                 if (isSendSuccessful is true)
                 {
@@ -29,22 +29,22 @@ namespace User.Mgmt.Service.Services
             return false;
         }
 
-        private MimeMessage CreateEmailMessage(Message message)
+        private MimeMessage ComposeEmail(Message message)
         {
-            var emailMessage = new MimeMessage();
+            var mimeMessage = new MimeMessage();
 
-            emailMessage.From.Add(new MailboxAddress("email", _emailConfig.From));
-            emailMessage.To.AddRange(message.To);
-            emailMessage.Subject = message.Subject;
-            emailMessage.Body = new TextPart(MimeKit.Text.TextFormat.Text)
+            mimeMessage.From.Add(new MailboxAddress("email", _emailConfig.From));
+            mimeMessage.To.AddRange(message.To);
+            mimeMessage.Subject = message.Subject;
+            mimeMessage.Body = new TextPart(MimeKit.Text.TextFormat.Text)
             {
                 Text = message.Content
             };
 
-            return emailMessage;
+            return mimeMessage;
         }
 
-        private bool Send(MimeMessage mailMessage)
+        private bool Send(MimeMessage mimeMessage)
         {
             using var smtpClient = new SmtpClient();
 
@@ -54,7 +54,7 @@ namespace User.Mgmt.Service.Services
                 smtpClient.AuthenticationMechanisms.Remove("XOAUTH2");
                 smtpClient.Authenticate(_emailConfig.Username, _emailConfig.Password);
 
-                smtpClient.Send(mailMessage);
+                smtpClient.Send(mimeMessage);
 
                 return true;
             }

@@ -4,6 +4,6 @@ namespace User.Mgmt.Service.Services
 {
     public interface IEmailService
     {
-        public bool SendEmails(Message message);
+        public bool ComposeNSendEmails(Message message);
     }
 }

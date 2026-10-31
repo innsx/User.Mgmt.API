@@ -3,10 +3,12 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
+using System.Net.Mail;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using User.Mgmt.API.Models;
+using User.Mgmt.Data.Enums;
 using User.Mgmt.Data.Models;
 using User.Mgmt.Service.Models;
 using User.Mgmt.Service.Models.Authentication.Login;
@@ -21,13 +23,19 @@ namespace User.Mgmt.Service.Services
         private readonly RoleManager<IdentityRole> _roleManager;
         private readonly SignInManager<ApplicationUser> _signInManager;
         private readonly IConfiguration _configuration;
-
-        public UserMgmtService(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager, SignInManager<ApplicationUser> signInManager, IConfiguration configuration)
+        private readonly JwtSettings _jWTSettingsSection;
+        public UserMgmtService(UserManager<ApplicationUser> userManager, 
+            RoleManager<IdentityRole> roleManager, 
+            SignInManager<ApplicationUser> signInManager,
+            IConfiguration configuration)  
         {
             _userManager = userManager;
             _roleManager = roleManager;
             _signInManager = signInManager;
             _configuration = configuration;
+            _jWTSettingsSection = _configuration.GetSection("JWTSettingsSection")
+                                           .Get<JwtSettings>()
+                                           ?? throw new InvalidOperationException("JWTSettingsSection is missing.");
         }
 
         public async Task<APIResponseDto<List<string>>> AssignsRoleToUserAsync(List<string> roles, ApplicationUser appUser)
@@ -54,7 +62,7 @@ namespace User.Mgmt.Service.Services
                             {
                                 IsSuccess = false,
                                 StatusCode = 204,
-                                Message = "User already assigned to this Role."
+                                Message = "Role already assigned."
                             };
                         }
                     }
@@ -64,7 +72,7 @@ namespace User.Mgmt.Service.Services
                         {
                             IsSuccess = false,
                             StatusCode = 204,
-                            Message = "Role not exist."
+                            Message = "Role not exist in system."
                         };
                     }
                 }
@@ -73,13 +81,13 @@ namespace User.Mgmt.Service.Services
                 {
                     IsSuccess = true,
                     StatusCode = 200,
-                    Message = "Role(s) has been assigned.",
+                    Message = "Role(s) assigned.",
                     Response = assignedRoles
                 };
             }
             else
             {            
-                var defaultRole = "Guest";
+                var defaultRole = Roles.Guest.ToString();
 
                 if (await _roleManager.RoleExistsAsync(defaultRole) is true)
                 {
@@ -94,7 +102,7 @@ namespace User.Mgmt.Service.Services
                     {
                         IsSuccess = false,
                         StatusCode = 204,
-                        Message = "User already assigned to this Role."
+                        Message = "Role already assigned."
                     };
                 }
 
@@ -102,7 +110,7 @@ namespace User.Mgmt.Service.Services
                 {
                     IsSuccess = true,
                     StatusCode = 200,
-                    Message = "A Default \'Guest\' Role has been assigned.",
+                    Message = $"A Default \'{Roles.Guest.ToString()}' Role has been assigned.",
                     Response = assignedRoles
                 };
             }
@@ -110,57 +118,86 @@ namespace User.Mgmt.Service.Services
 
         public async Task<APIResponseDto<CreateUserReponseDto>> CreatesRegisterUserAsnyc(RegisterUserRequestDto registerUserResponseDto)
         {
-            //check user exists in DB
-            var registeredUser = await _userManager.FindByEmailAsync(registerUserResponseDto.Email);
+            bool isEmailValid = IsValidEmailParser(registerUserResponseDto.Email);
 
-            if (registeredUser is not null)
+            if (isEmailValid is true)
             {
+                //check user exists in DB
+                var userExist = await _userManager.FindByEmailAsync(registerUserResponseDto.Email);
+
+                if (userExist is not null)
+                {
+                    return new APIResponseDto<CreateUserReponseDto>
+                    {
+                        IsSuccess = false,
+                        StatusCode = 400,
+                        Message = "User Email already taken."
+                    };
+                }
+
+                // instantiate a new ApplicationUser
+                ApplicationUser appUser = new ApplicationUser() 
+                {
+                    Email = registerUserResponseDto.Email,
+                    SecurityStamp = Guid.NewGuid().ToString(),
+                    UserName = registerUserResponseDto.Username,
+                };
+
+                var createAppUser = await _userManager.CreateAsync(appUser, registerUserResponseDto.Password);
+
+                if (createAppUser.Succeeded is true)
+                {
+                    var registrationToken = await _userManager.GenerateEmailConfirmationTokenAsync(appUser);
+
+                    return new APIResponseDto<CreateUserReponseDto>
+                    {
+                        IsSuccess = true,
+                        StatusCode = 200,
+                        Message = "New application User created.",
+                        Response = new CreateUserReponseDto()
+                        {
+                            Token = registrationToken,
+                            User = appUser
+                        }
+                    };
+                }
+
                 return new APIResponseDto<CreateUserReponseDto>
                 {
                     IsSuccess = false,
-                    StatusCode = 403,
-                    Message = "User already exits."
+                    StatusCode = 400,
+                    Message = $"Password must contain 1 uppercase, 1 lowercase, a digit, spcl char: -._+!@#$%^&*"
                 };
-            }
-
-            // instantiate a new ApplicationUser
-            ApplicationUser appUser = new()
-            {
-                Email = registerUserResponseDto.Email,
-                SecurityStamp = Guid.NewGuid().ToString(),
-                UserName = registerUserResponseDto.Username,
-            };
-
-            var createAppUser = await _userManager.CreateAsync(appUser, registerUserResponseDto.Password);
-
-            if (createAppUser.Succeeded is true)
-            {
-                var registrationToken = await _userManager.GenerateEmailConfirmationTokenAsync(appUser);
-
-                return new APIResponseDto<CreateUserReponseDto>
-                {
-                    IsSuccess = true,
-                    StatusCode = 201,
-                    Message = "New application User created.",
-                    Response = new CreateUserReponseDto()
-                    {
-                        Token = registrationToken,
-                        User = appUser
-                    }
-                };
-            }
+            }            
 
             return new APIResponseDto<CreateUserReponseDto>
             {
                 IsSuccess = false,
-                StatusCode = 404,
-                Message = $"User not found. Failed to register User."
+                StatusCode = 400,
+                Message = $"Email is invalid."
             };
+        }
+
+        private bool IsValidEmailParser(string email)
+        {
+            if (string.IsNullOrWhiteSpace(email))
+                return false;
+
+            try
+            {
+                // Throws FormatException if the structural layout is wrong
+                var mailAddress = new MailAddress(email);
+                return true;
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
         }
 
         public async Task<APIResponseDto<LoginTokensResponseDto>> GeneratesAccessNRefreshTokensAsync(ApplicationUser appUser)
         {
-            List<Claim> authClaims = await CreatesClaimsAsnyc(appUser);
+            List<Claim> authClaims = await CreatesClaimsNAddRolesAsnyc(appUser);
 
             if (authClaims.Any() is true)
             {
@@ -168,7 +205,9 @@ namespace User.Mgmt.Service.Services
 
                 if (generatedAccessToken is not null)
                 {
-                    _ = int.TryParse(_configuration["JWT:RefreshTokenValidity"], out int refreshTokenValidity);
+                    //var refreshToken = _configuration["JWTSettingsSection:RefreshTokenValidity"];
+                    var refreshToken = _jWTSettingsSection.RefreshTokenValidity.ToString();
+                    _ = int.TryParse(refreshToken, out int refreshTokenValidity);
 
                     appUser.RefreshToken = GeneratesRefreshToken();
 
@@ -206,7 +245,7 @@ namespace User.Mgmt.Service.Services
             };
         }
 
-        private async Task<List<Claim>> CreatesClaimsAsnyc(ApplicationUser appUser)
+        private async Task<List<Claim>> CreatesClaimsNAddRolesAsnyc(ApplicationUser appUser)
         {
             var authClaims = new List<Claim>()
             {
@@ -233,11 +272,14 @@ namespace User.Mgmt.Service.Services
 
         private JwtSecurityToken GeneratesAccessToken(List<Claim> authClaims)
         {
-            var secretKey = Encoding.UTF8.GetBytes(_configuration["JWT:Secret"]);
+            //var secretKey = Encoding.UTF8.GetBytes(_configuration["JWTSettingsSection:Secret"]);
+            var secretKey = Encoding.UTF8.GetBytes(_jWTSettingsSection.Secret!);
 
             var authSigningKey = new SymmetricSecurityKey(secretKey);
 
-            _ = int.TryParse(_configuration["JWT:TokenValidationInMinutes"], out int tokenValidationInMinutes);
+            //var tokenValdInMinutes = _configuration["JWTSettingsSection:TokenValidationInMinutes"];
+            var tokenValdInMinutes = _jWTSettingsSection.TokenValidationInMinutes.ToString();
+            _ = int.TryParse(tokenValdInMinutes, out int tokenValidationInMinutes);
 
             var expirationTimeUtc = DateTime.UtcNow.AddMinutes(tokenValidationInMinutes);
 
@@ -245,12 +287,14 @@ namespace User.Mgmt.Service.Services
 
             var expirationTimeInLocalTimeZone = TimeZoneInfo.ConvertTimeFromUtc(expirationTimeUtc, localTimeZone);
 
+            var credentials = new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256);
+
             var accessToken = new JwtSecurityToken(
-                issuer: _configuration["JWT:ValidIssuer"],
-                audience: _configuration["JWT:ValidAudience"],
+                issuer: _jWTSettingsSection.ValidIssuer, //_configuration["JWTSettingsSection:ValidIssuer"],
+                audience: _jWTSettingsSection.ValidAudience, //_configuration["JWTSettingsSection:ValidAudience"],
                 expires: expirationTimeInLocalTimeZone,
                 claims: authClaims,
-                signingCredentials: new SigningCredentials(authSigningKey, SecurityAlgorithms.HmacSha256)
+                signingCredentials: credentials
             );
 
             return accessToken;
@@ -381,7 +425,7 @@ namespace User.Mgmt.Service.Services
                     {
                         IsSuccess = false,
                         StatusCode = 404,
-                        Message = $"Failed to login with Two Factor Token.",
+                        Message = $"Failed to login with Two Factor Token. Token may have been expired, please Login again.",
                     };
                 }
             }
@@ -454,12 +498,14 @@ namespace User.Mgmt.Service.Services
 
         private ClaimsPrincipal? GetClaimsPrincipal(string oldAccessToken)
         {
+            var secrets = Encoding.UTF8.GetBytes(_configuration["JWTSettingsSection:Secret"]);  
+            
             var tokenValidationParameter = new TokenValidationParameters
             {
                 ValidateAudience = false,
                 ValidateIssuer = false,
                 ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["JWT:Secret"])),
+                IssuerSigningKey = new SymmetricSecurityKey(secrets),
                 ValidateLifetime = false
             };
 
