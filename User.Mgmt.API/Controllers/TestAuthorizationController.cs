@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
@@ -16,7 +17,9 @@ namespace User.Mgmt.API.Controllers
             return new List<string> {"Admin", "Jon", "Sue", "Julie" };
         }
 
-        [Authorize(Roles = "User")]
+        //in Program.cs if setup with:  options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
+        [Authorize(Roles = "User")]  //use this setup         
+        //[Authorize(AuthenticationSchemes = JwtBearerDefaults.AuthenticationScheme, Roles = "User")] //else use this setup
         [HttpGet("employee-by-id")]
         public IActionResult GetEmployeeById()
         {
