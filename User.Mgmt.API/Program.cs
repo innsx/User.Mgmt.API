@@ -81,10 +81,14 @@ builder.Services.AddDbContext<AppDbDataContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DbConnStrng"));
 });
 
+//builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+//    ConnectionMultiplexer.Connect("localhost:6379, connectTimeout=10000, syncTimeout=10000, abortConnect = false"));
+
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
-    ConnectionMultiplexer.Connect("localhost:6379, connectTimeout=10000, syncTimeout=10000, abortConnect = false"));
+    ConnectionMultiplexer.Connect(builder.Configuration.GetValue<string>("RedisDbConn")));
 
 builder.Services.AddScoped<ITokenBlacklistService, TokenBlacklistService>();
+builder.Services.AddScoped<IRedisCacheService, RedisCacheService>();
 
 
 // builder.Services.AddIdentity() is an ASP.NET Core dependency injection method
