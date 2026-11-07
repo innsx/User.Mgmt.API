@@ -1,15 +1,17 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using System.ComponentModel.DataAnnotations;
+using System.IdentityModel.Tokens.Jwt;
 using User.Mgmt.API.Models;
+using User.Mgmt.Data.Models;
 using User.Mgmt.Service.Exentions;
 using User.Mgmt.Service.Models;
 using User.Mgmt.Service.Models.Authentication.Login;
 using User.Mgmt.Service.Models.Authentication.SignUp;
 using User.Mgmt.Service.Models.Authentication.UserResponse;
 using User.Mgmt.Service.Services;
-using User.Mgmt.Data.Models;
 
 namespace User.Mgmt.API.Controllers
 {
@@ -20,14 +22,17 @@ namespace User.Mgmt.API.Controllers
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly IEmailService _emailService;
         private readonly IUserMgmtService _userMgmtService;
+        private readonly ITokenBlacklistService _tokenBlacklistService;
 
         public AuthenticationController(UserManager<ApplicationUser> userManager,
                                         IEmailService emailService,
-                                        IUserMgmtService userMgmtService)
+                                        IUserMgmtService userMgmtService,
+                                        ITokenBlacklistService tokenBlacklistService)
         {
             _userManager = userManager;
             _emailService = emailService;
             _userMgmtService = userMgmtService;
+            _tokenBlacklistService = tokenBlacklistService;
         }
 
         [HttpPost("register")]
@@ -37,7 +42,7 @@ namespace User.Mgmt.API.Controllers
 
             if (createUserResponse.IsSuccess is true)
             {
-                var assignRoleToUser = 
+                var assignRoleToUser =
                     await _userMgmtService.AssignsRoleToUserAsync(registerUserDto.Roles!, createUserResponse.Response!.User!);
 
                 if (assignRoleToUser.IsSuccess is true)
@@ -78,7 +83,7 @@ namespace User.Mgmt.API.Controllers
                                 Message = $"Email sent to {registerUserDto.Email}. Clicks Link to verify your email account.",
                                 IsSuccess = true
                             });
-                    } 
+                    }
 
                 }
             }
@@ -104,7 +109,7 @@ namespace User.Mgmt.API.Controllers
             //NOTE: we are not using _userManager.ConfirmEmailAsync()
             //because it will throw an error if the token is invalid or expired.
             //Instead, we are using our own service to validate the token and email.
-            var validatesRegistrationTokenResponse = 
+            var validatesRegistrationTokenResponse =
                 await _userMgmtService.ValidatesRegistrationTokenAsync(token, email);
 
             if (validatesRegistrationTokenResponse.IsSuccess is true)
@@ -173,14 +178,29 @@ namespace User.Mgmt.API.Controllers
             return Unauthorized();
         }
 
+
         [HttpPost("login-withTwoFToken")]
         public async Task<IActionResult> LoginWith2FToken(string twoFToken, string userName)
-        { 
-            var validateLogin2FTokenResponse = 
+        {
+            var validateLogin2FTokenResponse =
                 await _userMgmtService.ValidatesLoginUser2FTokenAsnyc(twoFToken, userName);
 
             if (validateLogin2FTokenResponse.IsSuccess is true)
             {
+                var token = validateLogin2FTokenResponse.Response!.AccessToken;
+
+                var cookieOptions = new CookieOptions
+                {
+                    Path = "/",
+                    HttpOnly = true,        // Prevents client-side JS from reading the cookie
+                    Secure = true,          // Required for HTTPS
+                    IsEssential = true,      // Required for GDPR compliance
+                    SameSite = SameSiteMode.Strict, // Or Lax depending on your frontend setup
+                    Expires = DateTime.UtcNow.AddHours(2) //token expiration
+                };
+
+                HttpContext.Response.Cookies.Append("HttpOnlyCookieToken", token.ToString()!, cookieOptions);
+
                 return Ok(validateLogin2FTokenResponse);
             }
 
@@ -210,7 +230,8 @@ namespace User.Mgmt.API.Controllers
 
                 string controller = "Authentication";
 
-                object messageContent = new { 
+                object messageContent = new
+                {
                     passwordResetToken, //NOTE: these parameters MUST match the 'passwordResetToken' &
                     email = appUser.Email  //'email' parameters name in the GetPasswordResetToken action method
                 };
@@ -226,7 +247,7 @@ namespace User.Mgmt.API.Controllers
 
                 var subject = "Forgot Passsword Confirmation Link:";
 
-                var message =  new Message(emailTos, subject, forgotPasswordUrlContent!);
+                var message = new Message(emailTos, subject, forgotPasswordUrlContent!);
 
                 bool isSendEmailSucceed = _emailService.ComposeNSendEmails(message);
 
@@ -235,11 +256,11 @@ namespace User.Mgmt.API.Controllers
                     return StatusCode(
                         StatusCodes.Status200OK,
                     new ResponseDto
-                            {
-                                Status = "Success",
-                                Message = $"Password reset request link is sent to: {email}.",
-                                IsSuccess = true
-                            });
+                    {
+                        Status = "Success",
+                        Message = $"Password reset request link is sent to: {email}.",
+                        IsSuccess = true
+                    });
                 }
             }
 
@@ -258,9 +279,9 @@ namespace User.Mgmt.API.Controllers
         public IActionResult GetPasswordResetToken(string passwordResetToken, string email)
         {
             var passwordResetResponse = new PasswordResetResponseDto
-            { 
-                PasswordResetToken = passwordResetToken, 
-                Email = email 
+            {
+                PasswordResetToken = passwordResetToken,
+                Email = email
             };
 
             return Ok(new { passwordResetResponse });
@@ -302,15 +323,15 @@ namespace User.Mgmt.API.Controllers
         [Route("refresh-tokens")]
         public async Task<IActionResult> RefreshTokens(LoginTokensResponseDto tokens)
         {
-            var renewAccessNRefreshTokensResponse = 
+            var renewAccessNRefreshTokensResponse =
                 await _userMgmtService.RenewAccessNRefreshTokensAsync(tokens);
 
-            if (renewAccessNRefreshTokensResponse.IsSuccess is true 
+            if (renewAccessNRefreshTokensResponse.IsSuccess is true
                 && renewAccessNRefreshTokensResponse is not null)
             {
                 return Ok(renewAccessNRefreshTokensResponse);
             }
-         
+
             return StatusCode(
                 StatusCodes.Status400BadRequest,
                 new ResponseDto
@@ -320,6 +341,69 @@ namespace User.Mgmt.API.Controllers
                     IsSuccess = false
                 });
         }
+
+
+        [HttpPost("logout")]
+        public async Task<IActionResult> Logout()
+        {
+            // 1. Extract JTI
+            //var jti = User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
+            var jti = string.Empty;
+            var jwtToken = new JwtSecurityToken();
+
+            //HttpContext.Request.Cookies.TryGetValue("HttpOnlyCookieToken", out var token);
+
+            string? rawToken = await HttpContext.GetTokenAsync("access_token");
+
+            if (rawToken != null) {
+                // 1. Extract JTI from the token
+                var handler = new JwtSecurityTokenHandler();
+                jwtToken = handler.ReadJwtToken(rawToken);
+                jti = jwtToken.Id; // JTI claim is usually stored in the 'jti' property of the JWT
+            }
+
+            // 2. Extract expiration claim to calculate exact remaining TTL
+            var expClaim = User.FindFirst(JwtRegisteredClaimNames.Exp)?.Value;
+
+            if (string.IsNullOrEmpty(jti) || string.IsNullOrEmpty(expClaim))
+            {
+                return BadRequest("Invalid token claims.");
+            }
+
+            // 3. Calculate remaining lifetime
+            var expirationTimeUnix = long.Parse(expClaim);
+            var expirationDateTime = DateTimeOffset.FromUnixTimeSeconds(expirationTimeUnix).UtcDateTime;
+            var remainingTime = (expirationDateTime - DateTime.UtcNow);
+
+            // 4. Place token in Redis Blacklist if it's still alive
+            if (remainingTime > TimeSpan.Zero)
+            {
+                await _tokenBlacklistService.BlacklistTokenAsync(jwtToken!);
+            }
+
+            var cookieOptions = new CookieOptions
+            {
+                Path = "/",
+                Secure = true,
+                //HttpOnly = true,
+                SameSite = SameSiteMode.Strict // match original SameSite
+            };
+
+            // 5. Delete the HTTPOnly cookie Token (ensure options match path/domain if configured)
+            Response.Cookies.Delete("HttpOnlyCookieToken", cookieOptions);
+
+            // 6. Call the user management service to handle any additional logout logic
+            await _userMgmtService.UserLogoutAsync();
+
+            return StatusCode(
+                StatusCodes.Status200OK,
+                new ResponseDto
+                {
+                    Status = "Success",
+                    Message = $"User logged out successfully.",
+                    IsSuccess = true
+                });
+        }
     }
 }
 
@@ -327,139 +411,34 @@ namespace User.Mgmt.API.Controllers
 
 
 
-//var user = await _userManager.FindByEmailAsync(passwordResetRequestDto.Email);
 
-//if (user is not null)
-//{
-//    var passwordResetResponse = 
-//        await _userManager.ResetPasswordAsync(user, passwordResetRequestDto.PasswordResetToken, passwordResetRequestDto.Password);
 
-//    if (passwordResetResponse.Succeeded is false)
+
+//    [HttpPost("logout")]
+//    public async Task<IActionResult> Logout()
 //    {
-//        foreach (var error in passwordResetResponse.Errors)
+//        var authHeader = Request.Headers["Authorization"].ToString();
+
+//        if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
 //        {
-//            ModelState.AddModelError(error.Code, error.Description);
+//            return BadRequest("Invalid token header.");
 //        }
 
-//        return Ok(ModelState);
+//        var token = authHeader.Substring("Bearer ".Length).Trim();
+
+//        // Revoke the token immediately by saving it to Redis blacklist
+//        await _tokenBlacklistService.BlacklistTokenAsync(token);
+
+//        // delete HTTPOnly cookie Token (ensure options match path/domain if configured)
+//        Response.Cookies.Delete("SetTokenCookie");
+
+//        return StatusCode(
+//            StatusCodes.Status200OK,
+//            new ResponseDto
+//            {
+//                Status = "Success",
+//                Message = $"User logged out successfully.",
+//                IsSuccess = true
+//            });
 //    }
-
-//    return StatusCode(
-//        StatusCodes.Status200OK,
-//        new ResponseDto
-//        {
-//            Status = "Success",
-//            Message = $"Password reset and saved.",
-//            IsSuccess = true
-//        });
-//}
-
-//return StatusCode(
-//    StatusCodes.Status404NotFound,
-//    new ResponseDto
-//    {
-//        Status = "Error",
-//        Message = $"User not found. Password reset failed.",
-//        IsSuccess = false
-//    });
-
-
-
-
-
-
-
-
-//var isSendEmailSuccessful = 
-//    _userMgmtService.EmailConfirmationLink(EmailRegisteredUserConfirm, registerUserDto, createdUserResponse);
-
-
-//return StatusCode(
-//    StatusCodes.Status200OK,
-//    new ResponseDto
-//    {
-//        Status = "Success",
-//        Message = $"Email sent to {registerUserDto.Email}. Open Link to verify your email account.",
-//        IsSuccess = true
-//    });
-
-
-
-
-
-
-//if (validateLoginUserResponse.StatusCode == 400)
-//{
-//    return StatusCode(
-//        StatusCodes.Status400BadRequest,
-//        new ResponseDto
-//        {
-//            Status = "Error",
-//            //Message = $"Renew Access Token and Refresh Token Failed.",
-//            Message = validateLoginUserResponse.Message,
-//            IsSuccess = false
-//        });
-//}
-
-//if (validateLoginUserResponse.StatusCode == 404)
-//{
-//    return StatusCode(
-//        StatusCodes.Status404NotFound,
-//        new ResponseDto
-//        {
-//            Status = "Error",
-//            Message = $"Refresh Token not found.",
-//            IsSuccess = false
-//        });
-//}
-
-
-
-
-
-
-
-
-
-
-
-//var appUser = await _userManager.FindByEmailAsync(email);
-
-//if (appUser is not null)
-//{
-//    if (appUser.EmailConfirmed is false)
-//    {
-//        //confirm User’s Email and UPDATE AspNetUser table EmailConfirmed column to a ‘1’ for TRUE
-//        var updateConfirmEmailFlag = await _userManager.ConfirmEmailAsync(appUser, token);
-
-//        if (updateConfirmEmailFlag.Succeeded is true)
-//        {
-//            return StatusCode(
-//                StatusCodes.Status200OK,
-//                new ResponseDto
-//                {
-//                    Status = "Success",
-//                    Message = $"Email: {email} verified and confirmed successfully.",
-//                    IsSuccess = true
-//                });
-//        }
-//    }
-
-//    return StatusCode(
-//        StatusCodes.Status400BadRequest,
-//        new ResponseDto
-//        {
-//            Status = "Error",
-//            Message = $"User's Email already confirmed.",
-//            IsSuccess = false
-//        });
-//}
-
-//return StatusCode(
-//        StatusCodes.Status500InternalServerError,
-//        new ResponseDto
-//        {
-//            Status = "Error",
-//            Message = $"User's Email: {email} does not exist.",
-//            IsSuccess = false
-//        });
+//} 

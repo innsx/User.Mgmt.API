@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net.Mail;
@@ -22,21 +23,18 @@ namespace User.Mgmt.Service.Services
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly RoleManager<IdentityRole> _roleManager;
         private readonly SignInManager<ApplicationUser> _signInManager;
-        private readonly IConfiguration _configuration;
         private readonly JwtSettings _jWTSettingsSection;
-        public UserMgmtService(UserManager<ApplicationUser> userManager, 
-            RoleManager<IdentityRole> roleManager, 
+
+        public UserMgmtService(UserManager<ApplicationUser> userManager,
+            RoleManager<IdentityRole> roleManager,
             SignInManager<ApplicationUser> signInManager,
-            IConfiguration configuration)  
+            IOptions<JwtSettings> jwtSettingsSection)
         {
             _userManager = userManager;
             _roleManager = roleManager;
             _signInManager = signInManager;
-            _configuration = configuration;
-            _jWTSettingsSection = _configuration.GetSection("JWTSettingsSection")
-                                           .Get<JwtSettings>()
-                                           ?? throw new InvalidOperationException("JWTSettingsSection is missing.");
-        }
+            _jWTSettingsSection = jwtSettingsSection.Value;
+         }
 
         public async Task<APIResponseDto<List<string>>> AssignsRoleToUserAsync(List<string> roles, ApplicationUser appUser)
         {
@@ -86,7 +84,7 @@ namespace User.Mgmt.Service.Services
                 };
             }
             else
-            {            
+            {
                 var defaultRole = Roles.Guest.ToString();
 
                 if (await _roleManager.RoleExistsAsync(defaultRole) is true)
@@ -136,7 +134,7 @@ namespace User.Mgmt.Service.Services
                 }
 
                 // instantiate a new ApplicationUser
-                ApplicationUser appUser = new ApplicationUser() 
+                ApplicationUser appUser = new ApplicationUser()
                 {
                     Email = registerUserResponseDto.Email,
                     SecurityStamp = Guid.NewGuid().ToString(),
@@ -168,7 +166,7 @@ namespace User.Mgmt.Service.Services
                     StatusCode = 400,
                     Message = $"Password must contain 1 uppercase, 1 lowercase, a digit, spcl char: -._+!@#$%^&*"
                 };
-            }            
+            }
 
             return new APIResponseDto<CreateUserReponseDto>
             {
@@ -249,6 +247,7 @@ namespace User.Mgmt.Service.Services
         {
             var authClaims = new List<Claim>()
             {
+                new Claim(ClaimTypes.NameIdentifier, appUser.Id),
                 new Claim(ClaimTypes.Name, appUser.UserName),
                 new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
             };
@@ -315,7 +314,7 @@ namespace User.Mgmt.Service.Services
 
                     return await Generates2FToken(appUser, loginRequestDto);
                 }
-                else 
+                else
                 {
                     return await Generates2FToken(appUser, loginRequestDto);
                 }
@@ -416,7 +415,7 @@ namespace User.Mgmt.Service.Services
 
                 if (signIn.Succeeded is true)
                 {
-                    //appUser.TwoFactorEnabled = true;
+                    appUser.TwoFactorEnabled = true;
                     return await GeneratesAccessNRefreshTokensAsync(appUser);
                 }
                 else
@@ -498,8 +497,8 @@ namespace User.Mgmt.Service.Services
 
         private ClaimsPrincipal? GetClaimsPrincipal(string oldAccessToken)
         {
-            var secrets = Encoding.UTF8.GetBytes(_configuration["JWTSettingsSection:Secret"]);  
-            
+            var secrets = Encoding.UTF8.GetBytes(_jWTSettingsSection.Secret!);
+
             var tokenValidationParameter = new TokenValidationParameters
             {
                 ValidateAudience = false,
@@ -534,7 +533,7 @@ namespace User.Mgmt.Service.Services
 
             if (user is not null)
             {
-                var resetPasswordResult = 
+                var resetPasswordResult =
                     await _userManager.ResetPasswordAsync(user, passwordResetRequestDto.PasswordResetToken, passwordResetRequestDto.Password);
 
                 if (resetPasswordResult.Succeeded is false)
@@ -583,9 +582,9 @@ namespace User.Mgmt.Service.Services
 
                 return new APIResponseDto<LoginTokensResponseDto>
                 {
-                        StatusCode = 201,
-                        Message = $"Email already confirmed.",
-                        IsSuccess = false
+                    StatusCode = 201,
+                    Message = $"Email already confirmed.",
+                    IsSuccess = false
                 };
             }
 
@@ -603,7 +602,7 @@ namespace User.Mgmt.Service.Services
 
             if (user is not null)
             {
-                var passwordResetResponse = 
+                var passwordResetResponse =
                     await _userManager.ResetPasswordAsync(user, passwordResetRequestDto.PasswordResetToken, passwordResetRequestDto.Password);
 
                 if (passwordResetResponse.Succeeded is false)
@@ -616,7 +615,7 @@ namespace User.Mgmt.Service.Services
                     };
                 }
 
-                return 
+                return
                     new ResponseDto
                     {
                         Status = "Success",
@@ -633,6 +632,53 @@ namespace User.Mgmt.Service.Services
                     Message = $"User not found.",
                     IsSuccess = false
                 };
+        }
+
+        public async Task<ApplicationUser> GetUserAsync(LoginRequestDto loginRequestDto)
+        {
+            var appUser = await _userManager.FindByNameAsync(loginRequestDto.Username);
+            if (appUser is not null)
+            {
+                return appUser;
+            }
+            return new ApplicationUser();
+        }
+
+        public async Task<ResponseDto> CheckPasswordSigninAsync(LoginRequestDto loginRequestDto, ApplicationUser user)
+        {
+            var passwordCheck = await _signInManager.CheckPasswordSignInAsync(user, loginRequestDto.Password, false);
+            if (passwordCheck.Succeeded is true)
+            {
+                return new ResponseDto
+                {
+                    Status = "Success",
+                    Message = $"Password matched.",
+                    IsSuccess = true
+                };
+            }
+            return new ResponseDto
+            {
+                Status = "Failed",
+                Message = $"Password does not match.",
+                IsSuccess = false
+            };
+        }
+
+        public Message GeneratesEmailMessageWith2FToken(APIResponseDto<LoginUser2FTokenResponseDto> generates2FTokenResponse)
+        {
+            var message = new Message(
+                new string[]
+                {
+                    generates2FTokenResponse.Response!.User!.Email!
+                },
+                "Two Factor Token",
+                $"Your Two Factor Token is: {generates2FTokenResponse.Response.TwoFToken}");
+            return message;
+        }
+
+        public async Task UserLogoutAsync()
+        {
+            await _signInManager.SignOutAsync();
         }
     }
 }

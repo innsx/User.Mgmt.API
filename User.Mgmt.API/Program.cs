@@ -2,13 +2,19 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using StackExchange.Redis;
 using System;
+using System.Runtime.Intrinsics.X86;
+using System.Security.Claims;
 using System.Text;
 using User.Mgmt.Data.DataContext;
 using User.Mgmt.Data.Models;
+using User.Mgmt.Service.CustomMiddleware;
 using User.Mgmt.Service.Models;
 using User.Mgmt.Service.Services;
 
@@ -54,6 +60,9 @@ var jwtSettingsSection = _configuration.GetSection("JWTSettingsSection")
                                        .Get<JwtSettings>()
                                        ?? throw new InvalidOperationException("JWTSettingsSection is missing.");
 
+builder.Services.Configure<JwtSettings>(
+    builder.Configuration.GetSection("JWTSettingsSection"));
+
 //********** builder.Services: Accesses the service collections in Program.cs ********************
 
 // Registers your custom DbContext subclass (AppDbContext) with the dependency injection system.
@@ -71,6 +80,12 @@ builder.Services.AddDbContext<AppDbDataContext>(options =>
     //and its connection string.
     options.UseSqlServer(builder.Configuration.GetConnectionString("DbConnStrng"));
 });
+
+builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+    ConnectionMultiplexer.Connect("localhost:6379, connectTimeout=10000, syncTimeout=10000, abortConnect = false"));
+
+builder.Services.AddScoped<ITokenBlacklistService, TokenBlacklistService>();
+
 
 // builder.Services.AddIdentity() is an ASP.NET Core dependency injection method
 // that registers the full user management and role management identity system
@@ -90,7 +105,7 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>  //<Appli
         options.User.RequireUniqueEmail = true;
 
         options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
-        options.Lockout.MaxFailedAccessAttempts = 5;
+        options.Lockout.MaxFailedAccessAttempts = 3;
         options.Lockout.AllowedForNewUsers = true;
 
         options.User.AllowedUserNameCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._+!@#$%^&*";
@@ -151,7 +166,12 @@ builder.Services.AddAuthentication(options =>
      *  on every single controller or action
     */
 
-}).AddJwtBearer(options => //setting up Jwt Token Bearer authentication configuration options
+}).AddCookie(options =>
+{
+    //Configures AddCookie options for HttpOnly cookie 
+    options.Cookie.Name = "HttpOnlyCookieToken";
+})
+.AddJwtBearer(options => //setting up Jwt Token Bearer authentication configuration options
 {
     //Saves the JWT token in the authentication context.
     //This allows you to retrieve the token later in your controllers
@@ -176,6 +196,8 @@ builder.Services.AddAuthentication(options =>
 
         ValidateLifetime = true, // Enforces token expiration checks
 
+        ValidateIssuerSigningKey = true,
+
         ClockSkew = TimeSpan.Zero, // Removes the default 5-minute grace period for expiration
 
         //pull the expected audience and issuer values from your
@@ -189,6 +211,55 @@ builder.Services.AddAuthentication(options =>
         //The system uses this to verify that the token hasn't been tampered with.     
         IssuerSigningKey =
             new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettingsSection.Secret!))  //_configuration["JWTSettingsSection:Secret"]
+    };
+
+    options.Events = new JwtBearerEvents
+    {
+        //2 options: use OnMessageReceived is more efficient
+        //This event is triggered whenever a JWT token is received in an incoming request.
+        // or use OnTokenValidated event to check for blacklisted tokens as a custom middleware class 
+        OnMessageReceived = async context =>
+        {
+            //context.Token = context.Request.Cookies["HttpOnlyCookieToken"];
+            var authHeader = context.Request.Headers["Authorization"].ToString();
+
+            if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
+            {
+                return;
+            }
+
+            var token = authHeader.Substring("Bearer ".Length).Trim();
+
+            var tokenBlacklistService = context.HttpContext.RequestServices.GetRequiredService<ITokenBlacklistService>();
+
+            // Extract the JTI claim from the validated token
+            //var jti = context.Principal?.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
+
+            var isBlacklisted = await tokenBlacklistService.IsTokenBlacklistedAsync(token ?? string.Empty);
+
+            if (isBlacklisted is true)
+            {
+                // Reject the token immediately if it exists in Redis
+                context.Fail("This token has been revoked.");
+            }
+
+            await Task.CompletedTask;
+        },
+
+        OnChallenge = async context =>
+        {
+            // Skip the default logic so we can write our own response
+            context.HandleResponse();
+
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.ContentType = "application/json";
+
+            // Retrieve the error message passed into context.Fail()
+            string errorMessage = context.AuthenticateFailure?.Message ?? "Unauthorized.";
+
+            var responseBody = new { error = errorMessage };
+            await context.Response.WriteAsJsonAsync(responseBody);
+        }
     };
 });
 
@@ -216,8 +287,6 @@ builder.Services.AddSingleton(emailConfig);
 builder.Services.AddScoped<IEmailService, EmailService>();
 
 builder.Services.AddScoped<IUserMgmtService, UserMgmtService>();
-
-builder.Services.AddScoped<JwtSettings>();
 
 //forces users to verify their email address before they are allowed to sign into the application,
 builder.Services.Configure<IdentityOptions>(options =>
@@ -424,6 +493,10 @@ app.UseHttpsRedirection();
 //validates them, and establishes the user's identity
 app.UseAuthentication();
 
+//already using the OnMessageReceived event in AddJwtBearer
+//to check for blacklisted tokens, so this middleware is not needed
+//app.UseMiddleware<MiddlewareInterceptBlacklistToken>();  //custom middleware to intercept blacklisted tokens
+
 //What are you allowed to do?
 //When a user requests a protected endpoint (like an admin panel),
 //app.UseAuthorization() intercepts the request.
@@ -447,3 +520,40 @@ app.MapControllers(); // 2. ACTIVATE THE ROUTES & Map controller endpoints to th
 // and starts continuously listening for incoming HTTP requests.
 //this is like turning on the open sign at a restaurant &  is ready to take orders
 app.Run();
+
+
+
+
+
+
+//options.Events = new JwtBearerEvents
+//{
+//    OnTokenValidated = async context =>
+//    {
+//        //var userId = context.Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+//        var userName = context.Principal?.FindFirst(ClaimTypes.Name)?.Value;
+
+//        if (userName == null)
+//        {
+//            return;
+//        }
+
+//        var securityStampClaim = context.Principal?.FindFirst("SecurityStamp")?.Value;
+
+//        //var userManager = context.HttpContext.RequestServices.GetRequiredService<UserManager<IdentityUser>>();
+
+//        //var user = await userManager.FindByNameAsync(userName);
+
+//        var user = await context.HttpContext.RequestServices
+//            .GetRequiredService<UserManager<ApplicationUser>>()
+//            .FindByNameAsync(userName);
+
+//        var currentSecurityStamp = user.SecurityStamp ?? string.Empty;
+
+//        if (securityStampClaim != currentSecurityStamp)
+//        {
+//            context.Fail("Token has been revoked.");
+//        }
+//    }
+//};
