@@ -71,7 +71,7 @@ namespace User.Mgmt.API.Controllers
                                         "Registration confirmation email link.",
                                         registrationEmailConfirmationLink!);
 
-                    var isSendEmailSuccessful = _emailService.ComposeNSendEmails(message);
+                    var isSendEmailSuccessful = await _emailService.ComposeNSendEmailsAsync(message);
 
                     if (isSendEmailSuccessful is true)
                     {
@@ -138,40 +138,57 @@ namespace User.Mgmt.API.Controllers
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginRequestDto loginRequestDto)
         {
-            var generates2FTokenResponse = await _userMgmtService.Generates2FTokenAsync(loginRequestDto);
+            var loginResponse = await _userMgmtService.AuthenticatesLoginUserAsync(loginRequestDto);
 
-            if (generates2FTokenResponse.Response is not null)
+            if (loginResponse.IsSuccess is true)
             {
-                var appUser = generates2FTokenResponse.Response.User;
-                var twoFToken = generates2FTokenResponse.Response.TwoFToken;
+                var generates2FTokenResponse = await _userMgmtService.Generates2FTokenAsync(loginRequestDto);
 
-                var message = new Message(
-                                new string[] { appUser.Email! },
-                                "OTP 2 factor token email confirmation link.",
-                                twoFToken);   //NOTE: this parameteer MUST match the 'twoFToken' parameter name in the LoginWith2FToken action method
-
-                var isSendEmailSucceed = _emailService.ComposeNSendEmails(message);
-
-                if (isSendEmailSucceed is true)
+                if (generates2FTokenResponse.Response is not null)
                 {
-                    return StatusCode(
-                        StatusCodes.Status200OK,
-                        new ResponseDto
-                        {
-                            Status = "Success",
-                            Message = $"An Email has been sent to: {appUser.Email} to perform an OTP (2 factor Authentication).",
-                            IsSuccess = generates2FTokenResponse.IsSuccess
-                        });
-                }
-
-                return StatusCode(
-                    StatusCodes.Status400BadRequest,
-                    new ResponseDto
+                    var emailConfirmation2FTokenResponse = await _userMgmtService.CreatesEmailConfirmation2FTokenAsync(generates2FTokenResponse);
+                    
+                    if (emailConfirmation2FTokenResponse.IsSuccess is true)
                     {
-                        Status = "Error",
-                        Message = $"Email was not sent to: {appUser.Email} to perform an OTP (2 factor Authentication).",
-                        IsSuccess = false
-                    });
+                        return StatusCode(
+                            StatusCodes.Status200OK,
+                            new ResponseDto
+                            {
+                                Message = emailConfirmation2FTokenResponse.Message,
+                                IsSuccess = emailConfirmation2FTokenResponse.IsSuccess
+                            });
+                    }
+                //    var appUser = generates2FTokenResponse.Response.User;
+                //    var twoFToken = generates2FTokenResponse.Response.TwoFToken;
+
+                //    var message = new Message(
+                //                    new string[] { appUser.Email! },
+                //                    "OTP 2 factor token email confirmation link.",
+                //                    twoFToken);   //NOTE: this parameteer MUST match the 'twoFToken' parameter name in the LoginWith2FToken action method
+
+                //    var isSendEmailSucceed = _emailService.ComposeNSendEmails(message);
+
+                //    if (isSendEmailSucceed is true)
+                //    {
+                //        return StatusCode(
+                //            StatusCodes.Status200OK,
+                //            new ResponseDto
+                //            {
+                //                Status = "Success",
+                //                Message = $"An Email has been sent to: {appUser.Email} to perform an OTP (2 factor Authentication).",
+                //                IsSuccess = generates2FTokenResponse.IsSuccess
+                //            });
+                //    }
+
+                //    return StatusCode(
+                //        StatusCodes.Status400BadRequest,
+                //        new ResponseDto
+                //        {
+                //            Status = "Error",
+                //            Message = $"Email was not sent to: {appUser.Email} to perform an OTP (2 factor Authentication).",
+                //            IsSuccess = false
+                //        });
+                }
             }
 
             //if user not exist, we're returning an Unauthorized result
@@ -183,7 +200,7 @@ namespace User.Mgmt.API.Controllers
         public async Task<IActionResult> LoginWith2FToken(string twoFToken, string userName)
         {
             var validateLogin2FTokenResponse =
-                await _userMgmtService.ValidatesLoginUser2FTokenAsnyc(twoFToken, userName);
+                await _userMgmtService.AuthenticateLoginUser2FTokenAsnyc(twoFToken, userName);
 
             if (validateLogin2FTokenResponse.IsSuccess is true)
             {
@@ -249,7 +266,7 @@ namespace User.Mgmt.API.Controllers
 
                 var message = new Message(emailTos, subject, forgotPasswordUrlContent!);
 
-                bool isSendEmailSucceed = _emailService.ComposeNSendEmails(message);
+                bool isSendEmailSucceed = await _emailService.ComposeNSendEmailsAsync(message);
 
                 if (isSendEmailSucceed is true)
                 {

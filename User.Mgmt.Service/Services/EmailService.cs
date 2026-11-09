@@ -13,20 +13,20 @@ namespace User.Mgmt.Service.Services
             _emailConfig = emailConfig;
         }
 
-        public bool ComposeNSendEmails(Message message)
+        public Task<bool> ComposeNSendEmailsAsync(Message message)
         {
             var composeMimeMessage = ComposeEmail(message);
 
             if (composeMimeMessage is not null)
             {
                 var isSendSuccessful = Send(composeMimeMessage);
-
+                 
                 if (isSendSuccessful is true)
                 {
-                    return true;
+                    return Task.FromResult(true);
                 }
             }  
-            return false;
+            return Task.FromResult(false);
         }
 
         private MimeMessage ComposeEmail(Message message)

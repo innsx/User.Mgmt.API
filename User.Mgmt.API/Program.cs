@@ -12,6 +12,7 @@ using System;
 using System.Runtime.Intrinsics.X86;
 using System.Security.Claims;
 using System.Text;
+using User.Mgmt.API.Configurations;
 using User.Mgmt.Data.DataContext;
 using User.Mgmt.Data.Models;
 using User.Mgmt.Service.CustomMiddleware;
@@ -90,6 +91,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
 builder.Services.AddScoped<ITokenBlacklistService, TokenBlacklistService>();
 builder.Services.AddScoped<IRedisCacheService, RedisCacheService>();
 
+builder.Services.AddScoped<ConfigurationsManager>();
 
 // builder.Services.AddIdentity() is an ASP.NET Core dependency injection method
 // that registers the full user management and role management identity system

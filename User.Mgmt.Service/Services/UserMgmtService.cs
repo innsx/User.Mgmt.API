@@ -24,16 +24,19 @@ namespace User.Mgmt.Service.Services
         private readonly RoleManager<IdentityRole> _roleManager;
         private readonly SignInManager<ApplicationUser> _signInManager;
         private readonly JwtSettings _jWTSettingsSection;
+        private readonly IEmailService _emailService;
 
         public UserMgmtService(UserManager<ApplicationUser> userManager,
             RoleManager<IdentityRole> roleManager,
             SignInManager<ApplicationUser> signInManager,
-            IOptions<JwtSettings> jwtSettingsSection)
+            IOptions<JwtSettings> jwtSettingsSection,
+            IEmailService emailService)
         {
             _userManager = userManager;
             _roleManager = roleManager;
             _signInManager = signInManager;
             _jWTSettingsSection = jwtSettingsSection.Value;
+            _emailService = emailService;
          }
 
         public async Task<APIResponseDto<List<string>>> AssignsRoleToUserAsync(List<string> roles, ApplicationUser appUser)
@@ -389,7 +392,29 @@ namespace User.Mgmt.Service.Services
             return Convert.ToBase64String(randomNumber);
         }
 
-        public async Task<APIResponseDto<LoginTokensResponseDto>> ValidatesLoginUser2FTokenAsnyc(string twoFToken, string userName)
+        public async Task<APIResponseDto<LoginUser2FTokenResponseDto>> AuthenticatesLoginUserAsync(LoginRequestDto loginRequestDto)
+        {
+            var appUser = await _userManager.FindByNameAsync(loginRequestDto.Username);
+
+            if (appUser is null)
+            {
+                return new APIResponseDto<LoginUser2FTokenResponseDto>
+                {
+                    IsSuccess = false,
+                    StatusCode = 404,
+                    Message = $"User with userName: {loginRequestDto.Username} does not exist.",
+                };
+            }
+
+            return new APIResponseDto<LoginUser2FTokenResponseDto>
+            {
+                IsSuccess = true,
+                StatusCode = 200,
+                Message = $"User with userName: {loginRequestDto.Username} exist.",
+            };
+        }
+
+        public async Task<APIResponseDto<LoginTokensResponseDto>> AuthenticateLoginUser2FTokenAsnyc(string twoFToken, string userName)
         {
             var appUser = await _userManager.FindByNameAsync(userName);
 
@@ -441,6 +466,36 @@ namespace User.Mgmt.Service.Services
             };
         }
 
+        public async Task<APIResponseDto<LoginUser2FTokenResponseDto>> CreatesEmailConfirmation2FTokenAsync(APIResponseDto<LoginUser2FTokenResponseDto> generates2FTokenResponse)
+        {
+            var appUser = generates2FTokenResponse.Response!.User;
+            var twoFToken = generates2FTokenResponse.Response.TwoFToken;
+
+            var message = new Message(
+                            new string[] { appUser.Email! },
+                            "OTP 2 factor token email confirmation link.",
+                            twoFToken);   //NOTE: this parameteer MUST match the 'twoFToken' parameter name in the LoginWith2FToken action method
+
+            var isSendEmailSucceed = await _emailService.ComposeNSendEmailsAsync(message);
+
+            if (isSendEmailSucceed is true)
+            {
+                return new APIResponseDto<LoginUser2FTokenResponseDto>
+                {
+                    IsSuccess = true,
+                    StatusCode = 200,
+                    Message = $"Email was sent to  {generates2FTokenResponse.Response!.User.Email} account",
+                };
+            }
+
+            return new APIResponseDto<LoginUser2FTokenResponseDto>                 
+                {
+                    StatusCode = 404,
+                    Message = $"Email was not sent to: {appUser.Email} to perform an OTP (2 factor Authentication).",
+                    IsSuccess = false
+                };
+        }
+        
         public async Task<APIResponseDto<LoginTokensResponseDto>> RenewAccessNRefreshTokensAsync(LoginTokensResponseDto tokens)
         {
             var oldAccessToken = tokens.AccessToken;

@@ -19,10 +19,13 @@ namespace User.Mgmt.Service.Services
         Task<ApplicationUser> GetUserAsync(LoginRequestDto loginRequestDto);
         Task<ResponseDto> CheckPasswordSigninAsync(LoginRequestDto loginRequestDto, ApplicationUser user);
         Message GeneratesEmailMessageWith2FToken(APIResponseDto<LoginUser2FTokenResponseDto> generates2FTokenResponse);
+
+        Task<APIResponseDto<LoginUser2FTokenResponseDto>> AuthenticatesLoginUserAsync(LoginRequestDto loginRequestDto);
         Task<APIResponseDto<LoginUser2FTokenResponseDto>> Generates2FTokenAsync(LoginRequestDto loginRequestDto);
         Task UserLogoutAsync();
         Task<APIResponseDto<LoginTokensResponseDto>> GeneratesAccessNRefreshTokensAsync(ApplicationUser user);
-        Task<APIResponseDto<LoginTokensResponseDto>> ValidatesLoginUser2FTokenAsnyc(string twoFToken, string userName);
+        Task<APIResponseDto<LoginTokensResponseDto>> AuthenticateLoginUser2FTokenAsnyc(string twoFToken, string userName);
+        Task<APIResponseDto<LoginUser2FTokenResponseDto>> CreatesEmailConfirmation2FTokenAsync(APIResponseDto<LoginUser2FTokenResponseDto> generates2FTokenResponse);
         Task<APIResponseDto<LoginTokensResponseDto>> RenewAccessNRefreshTokensAsync(LoginTokensResponseDto token);
 
         //APIResponseDto<LoginTokensResponseDto> EmailConfirmationLink(Func<string, string, Task<IActionResult>> emailRegisteredUserConfirm, RegisterUserRequestDto registerUserDto, APIResponseDto<CreateUserReponseDto> createdUserResponse);

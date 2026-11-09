@@ -4,6 +4,6 @@ namespace User.Mgmt.Service.Services
 {
     public interface IEmailService
     {
-        public bool ComposeNSendEmails(Message message);
+        public Task<bool> ComposeNSendEmailsAsync(Message message);
     }
 }
